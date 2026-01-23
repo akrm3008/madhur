@@ -1,0 +1,3 @@
+uv is used for all Python management. You can add dependencies with `uv add <package>`, sync with `uv sync`, update packages with `uv sync --upgrade`, etc.
+
+ruff is used for static error checking and formatting. After every code change in asm-prefect/, common-python-utils/, and vuln-mgmt-prefect/, run `uv run ruff check --fix`, fix all the issues that weren't automatically fixed, then run `uv run ruff format`.

@@ -1,0 +1,1 @@
+Aisy frontends (app-frontend, marketing-frontend) are written in React. We use yarn for package management.
