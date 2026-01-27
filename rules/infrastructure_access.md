@@ -32,11 +32,47 @@ assume aisy-dev --exec "aws sts get-caller-identity"
 
 ## Docker / ECR Access
 
+**ECR Registry:** `780193927358.dkr.ecr.eu-west-1.amazonaws.com`
+
+**Available Repositories:**
+- `prefect-domain-collection` - Domain collection flows
+- `prefect-content-discovery` - Content discovery flows
+
+### ECR Login
+
+Pipes don't work directly with `assume --exec`. Use a script file:
+
 ```bash
-# Login to ECR and pull images
-assume aisy-dev --exec bash
+# Create login script (do this once)
+cat > /tmp/ecr_login.sh << 'EOF'
+#!/bin/bash
 aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 780193927358.dkr.ecr.eu-west-1.amazonaws.com
+EOF
+chmod +x /tmp/ecr_login.sh
+
+# Login to ECR
+assume aisy-dev --exec "/tmp/ecr_login.sh"
+```
+
+### Pull Images
+
+```bash
+# Pull domain collection image
+docker pull 780193927358.dkr.ecr.eu-west-1.amazonaws.com/prefect-domain-collection:latest
+
+# Pull content discovery image
 docker pull 780193927358.dkr.ecr.eu-west-1.amazonaws.com/prefect-content-discovery:latest
+```
+
+### Inspect Container Contents
+
+```bash
+# Check if a file exists in the image
+docker run --rm 780193927358.dkr.ecr.eu-west-1.amazonaws.com/prefect-domain-collection:latest \
+  ls -la /app/asm-prefect/configurations/
+
+# Run a shell to explore
+docker run -it --rm 780193927358.dkr.ecr.eu-west-1.amazonaws.com/prefect-domain-collection:latest bash
 ```
 
 ## Running Tests in Docker
