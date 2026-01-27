@@ -1,0 +1,52 @@
+# Infrastructure Access
+
+## Database Access
+
+- **Host:** localhost:9999
+- **Database:** hasura
+- **Schema:** public
+- **Username:** postgres
+- **Auth:** pgpass file (~/.pgpass)
+
+```bash
+# Connect to database
+PGPASSFILE=~/.pgpass psql -h localhost -p 9999 -U postgres -d hasura
+
+# Run a query
+PGPASSFILE=~/.pgpass psql -h localhost -p 9999 -U postgres -d hasura -c "SELECT * FROM table LIMIT 10;"
+```
+
+## AWS Access
+
+Use `assume` with `--exec` to run commands with AWS credentials:
+
+```bash
+# Open a subshell with credentials
+assume aisy-dev --exec bash
+
+# Or run a single command
+assume aisy-dev --exec "aws sts get-caller-identity"
+```
+
+**Note:** Don't rely on `assume` setting env vars in current shell - stale credentials in `~/.aws/credentials` may override. Always use `--exec` flag.
+
+## Docker / ECR Access
+
+```bash
+# Login to ECR and pull images
+assume aisy-dev --exec bash
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 780193927358.dkr.ecr.eu-west-1.amazonaws.com
+docker pull 780193927358.dkr.ecr.eu-west-1.amazonaws.com/prefect-content-discovery:latest
+```
+
+## Running Tests in Docker
+
+To test code changes before deployment, you can run containers locally:
+
+```bash
+# Run a specific flow/task in the container
+docker run -it --rm \
+  -v /path/to/local/code:/app/asm-prefect-dev \
+  780193927358.dkr.ecr.eu-west-1.amazonaws.com/prefect-content-discovery:latest \
+  python -c "from module import function; function()"
+```
