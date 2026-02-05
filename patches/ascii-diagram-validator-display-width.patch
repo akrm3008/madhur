@@ -1,5 +1,5 @@
---- /tmp/cc-skills-upstream/plugins/doc-tools/skills/ascii-diagram-validator/scripts/check_ascii_alignment.py	2026-02-05 21:07:28.789268477 +0000
-+++ /home/paul/.claude/plugins/cache/cc-skills/doc-tools/11.14.0/skills/ascii-diagram-validator/scripts/check_ascii_alignment.py	2026-02-05 21:08:00.736303205 +0000
+--- check_ascii_alignment.py	2026-02-05 21:07:28.789268477 +0000
++++ check_ascii_alignment.py	2026-02-05 21:10:19.538927845 +0000
 @@ -20,6 +20,7 @@
  import argparse
  import re
