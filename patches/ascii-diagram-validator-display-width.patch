@@ -1,0 +1,332 @@
+--- /tmp/cc-skills-upstream/plugins/doc-tools/skills/ascii-diagram-validator/scripts/check_ascii_alignment.py	2026-02-05 21:07:28.789268477 +0000
++++ /home/paul/.claude/plugins/cache/cc-skills/doc-tools/11.14.0/skills/ascii-diagram-validator/scripts/check_ascii_alignment.py	2026-02-05 21:08:00.736303205 +0000
+@@ -20,6 +20,7 @@
+ import argparse
+ import re
+ import sys
++import unicodedata
+ from dataclasses import dataclass
+ from enum import Enum
+ from pathlib import Path
+@@ -121,6 +122,59 @@
+ FILE_TREE_PATTERN = re.compile(r'[├└]── ')
+ 
+ 
++# ---------------------------------------------------------------------------
++# Display-width helpers
++# ---------------------------------------------------------------------------
++# Box-drawing characters (U+2500-U+257F) have East Asian Width "Ambiguous" but
++# are universally rendered as 1 cell in all terminals and editors.  Other
++# ambiguous-width characters (geometric shapes like ◀ ▼ ▲, U+25A0-U+25FF) are
++# rendered as **2 cells** in many editors (VS Code, Cursor, CJK terminals).
++# This mismatch causes visual misalignment that is invisible at the character-
++# index level.  The helpers below let the validator work in *display columns*
++# so it catches these issues.
++# ---------------------------------------------------------------------------
++
++def char_display_width(ch: str) -> int:
++    """Return display width of a single character in terminal cells.
++
++    Box-drawing characters are always 1-wide.  Full-width ('F'/'W') and
++    ambiguous-width ('A') characters are treated as 2-wide, which matches the
++    common behavior in VS Code, Cursor, and most modern terminal emulators.
++    """
++    if ch in ALL_BOX_CHARS:
++        return 1
++    eaw = unicodedata.east_asian_width(ch)
++    if eaw in ('F', 'W'):
++        return 2
++    if eaw == 'A':
++        return 2  # conservative: matches VS Code / Cursor default
++    return 1
++
++
++def char_at_display_col(line: str, target_dcol: int) -> str | None:
++    """Return the character whose display column equals *target_dcol*.
++
++    Returns ``None`` when *target_dcol* falls beyond the end of the line or
++    inside a wide character (i.e. the second cell of a 2-wide glyph).
++    """
++    dcol = 0
++    for ch in line:
++        if dcol == target_dcol:
++            return ch
++        w = char_display_width(ch)
++        if dcol + w > target_dcol:
++            return None  # target falls inside a wide character
++        dcol += w
++    return None  # beyond end of line
++
++
++def get_char_at_display_col(lines: list[str], row: int, target_dcol: int) -> str | None:
++    """Get the character at a display column on a given row, with bounds check."""
++    if row < 0 or row >= len(lines):
++        return None
++    return char_at_display_col(lines[row], target_dcol)
++
++
+ class Severity(Enum):
+     ERROR = "error"
+     WARNING = "warning"
+@@ -174,24 +228,34 @@
+     return line[col]
+ 
+ 
+-def find_box_chars_in_line(line: str) -> list[tuple[int, str]]:
+-    """Find all box-drawing characters in a line with their column positions."""
++def find_box_chars_in_line(line: str) -> list[tuple[int, int, str]]:
++    """Find all box-drawing characters in a line with their positions.
++
++    Returns list of ``(char_index, display_col, char)``.
++    """
+     results = []
+-    for col, char in enumerate(line):
++    dcol = 0
++    for ci, char in enumerate(line):
+         if char in ALL_BOX_CHARS:
+-            results.append((col, char))
++            results.append((ci, dcol, char))
++        dcol += char_display_width(char)
+     return results
+ 
+ 
+ def check_vertical_alignment(
+-    lines: list[str], row: int, col: int, char: str, file: str
++    lines: list[str], row: int, col: int, dcol: int, char: str, file: str
+ ) -> list[Issue]:
+-    """Check vertical alignment for a character that connects up or down."""
++    """Check vertical alignment for a character that connects up or down.
++
++    Uses *dcol* (display column) to find the corresponding character on
++    adjacent lines, so that ambiguous-width characters don't cause false
++    negatives.
++    """
+     issues = []
+ 
+     # Check if character should connect upward
+     if char in CONNECTS_UP:
+-        above = get_char_at(lines, row - 1, col)
++        above = get_char_at_display_col(lines, row - 1, dcol)
+         # Valid connections: box chars that connect down, arrows, terminators,
+         # or horizontal lines (graph-easy arrow stem pattern: │ below ─)
+         if above is not None and above not in CONNECTS_DOWN and above not in ' \t' and above not in VALID_TERMINATORS and above not in HORIZONTAL:
+@@ -200,13 +264,13 @@
+                 line=row + 1,  # 1-indexed
+                 column=col + 1,
+                 severity=Severity.ERROR,
+-                message=f"vertical connector '{char}' at column {col + 1} has no matching character above (found '{above}')",
+-                suggestion=f"Add '│', '├', '┤', '┬', or '┼' at line {row}, column {col + 1}, or check if '{char}' should be a different character"
++                message=f"vertical connector '{char}' at column {col + 1} (display col {dcol + 1}) has no matching character above (found '{above}')",
++                suggestion=f"Add '│', '├', '┤', '┬', or '┼' at line {row}, display column {dcol + 1}, or check if '{char}' should be a different character"
+             ))
+ 
+     # Check if character should connect downward
+     if char in CONNECTS_DOWN:
+-        below = get_char_at(lines, row + 1, col)
++        below = get_char_at_display_col(lines, row + 1, dcol)
+         # Valid connections: box chars that connect up, arrows, terminators,
+         # or horizontal lines (graph-easy arrow stem pattern: │ above ─)
+         if below is not None and below not in CONNECTS_UP and below not in ' \t' and below not in VALID_TERMINATORS and below not in HORIZONTAL:
+@@ -215,8 +279,8 @@
+                 line=row + 1,
+                 column=col + 1,
+                 severity=Severity.ERROR,
+-                message=f"vertical connector '{char}' at column {col + 1} has no matching character below (found '{below}')",
+-                suggestion=f"Add '│', '├', '┤', '┴', or '┼' at line {row + 2}, column {col + 1}, or check if '{char}' should be a different character"
++                message=f"vertical connector '{char}' at column {col + 1} (display col {dcol + 1}) has no matching character below (found '{below}')",
++                suggestion=f"Add '│', '├', '┤', '┴', or '┼' at line {row + 2}, display column {dcol + 1}, or check if '{char}' should be a different character"
+             ))
+ 
+     return issues
+@@ -259,15 +323,19 @@
+ 
+ 
+ def check_corner_connections(
+-    lines: list[str], row: int, col: int, char: str, file: str
++    lines: list[str], row: int, col: int, dcol: int, char: str, file: str
+ ) -> list[Issue]:
+-    """Validate corner characters have proper connections."""
++    """Validate corner characters have proper connections.
++
++    Uses *dcol* for vertical checks (above/below) and *col* for horizontal
++    checks (left/right), matching the approach of :func:`check_vertical_alignment`.
++    """
+     issues = []
+ 
+     # Top-left corner: should connect right and down
+     if char in CORNER_TL:
+         right = get_char_at(lines, row, col + 1)
+-        below = get_char_at(lines, row + 1, col)
++        below = get_char_at_display_col(lines, row + 1, dcol)
+ 
+         if right is not None and right not in CONNECTS_LEFT and right not in ' \t\n' and right not in VALID_TERMINATORS:
+             issues.append(Issue(
+@@ -285,14 +353,14 @@
+                 line=row + 1,
+                 column=col + 1,
+                 severity=Severity.ERROR,
+-                message=f"top-left corner '{char}' not connected below",
+-                suggestion=f"Add vertical line '│' or '║' at line {row + 2}, column {col + 1}"
++                message=f"top-left corner '{char}' not connected below (found '{below}' at display col {dcol + 1})",
++                suggestion=f"Add vertical line '│' or '║' at line {row + 2}, display column {dcol + 1}"
+             ))
+ 
+     # Top-right corner: should connect left and down
+     if char in CORNER_TR:
+         left = get_char_at(lines, row, col - 1)
+-        below = get_char_at(lines, row + 1, col)
++        below = get_char_at_display_col(lines, row + 1, dcol)
+ 
+         if left is not None and left not in CONNECTS_RIGHT and left not in ' \t\n' and left not in VALID_TERMINATORS:
+             issues.append(Issue(
+@@ -310,14 +378,14 @@
+                 line=row + 1,
+                 column=col + 1,
+                 severity=Severity.ERROR,
+-                message=f"top-right corner '{char}' not connected below",
+-                suggestion=f"Add vertical line '│' or '║' at line {row + 2}, column {col + 1}"
++                message=f"top-right corner '{char}' not connected below (found '{below}' at display col {dcol + 1})",
++                suggestion=f"Add vertical line '│' or '║' at line {row + 2}, display column {dcol + 1}"
+             ))
+ 
+     # Bottom-left corner: should connect right and up
+     if char in CORNER_BL:
+         right = get_char_at(lines, row, col + 1)
+-        above = get_char_at(lines, row - 1, col)
++        above = get_char_at_display_col(lines, row - 1, dcol)
+ 
+         if right is not None and right not in CONNECTS_LEFT and right not in ' \t\n' and right not in VALID_TERMINATORS:
+             issues.append(Issue(
+@@ -335,14 +403,14 @@
+                 line=row + 1,
+                 column=col + 1,
+                 severity=Severity.ERROR,
+-                message=f"bottom-left corner '{char}' not connected above",
+-                suggestion=f"Add vertical line '│' or '║' at line {row}, column {col + 1}"
++                message=f"bottom-left corner '{char}' not connected above (found '{above}' at display col {dcol + 1})",
++                suggestion=f"Add vertical line '│' or '║' at line {row}, display column {dcol + 1}"
+             ))
+ 
+     # Bottom-right corner: should connect left and up
+     if char in CORNER_BR:
+         left = get_char_at(lines, row, col - 1)
+-        above = get_char_at(lines, row - 1, col)
++        above = get_char_at_display_col(lines, row - 1, dcol)
+ 
+         if left is not None and left not in CONNECTS_RIGHT and left not in ' \t\n' and left not in VALID_TERMINATORS:
+             issues.append(Issue(
+@@ -360,13 +428,77 @@
+                 line=row + 1,
+                 column=col + 1,
+                 severity=Severity.ERROR,
+-                message=f"bottom-right corner '{char}' not connected above",
+-                suggestion=f"Add vertical line '│' or '║' at line {row}, column {col + 1}"
++                message=f"bottom-right corner '{char}' not connected above (found '{above}' at display col {dcol + 1})",
++                suggestion=f"Add vertical line '│' or '║' at line {row}, display column {dcol + 1}"
+             ))
+ 
+     return issues
+ 
+ 
++# Map of common ambiguous-width arrows to their narrow (EAW=N) replacements
++NARROW_ARROW_REPLACEMENTS: dict[str, str] = {
++    '◀': '◄',  # U+25C0 → U+25C4
++    '▶': '►',  # U+25B6 → U+25BA
++    '▼': '▾',  # U+25BC → U+25BE
++    '▲': '▴',  # U+25B2 → U+25B4
++    '↓': '⇓',  # U+2193 → U+21D3
++    '↑': '⇑',  # U+2191 → U+21D1
++    '←': '⟵',  # U+2190 → U+27F5
++    '→': '⟶',  # U+2192 → U+27F6
++}
++
++
++def check_ambiguous_width_chars(
++    lines: list[str], block_start: int, file: str
++) -> list[Issue]:
++    """Flag non-box-drawing characters with ambiguous or full display width.
++
++    Characters like ◀ ▼ ▲ (East Asian Width 'A') render as 1 cell in some
++    editors and 2 cells in others.  Full-width characters (EAW 'F'/'W') are
++    always 2 cells.  Both cause visual misalignment when mixed with
++    single-cell box-drawing characters.
++
++    Severity is ERROR when the character appears on a line that also contains
++    box-drawing characters (guaranteed visual breakage), WARNING otherwise.
++    """
++    issues = []
++    seen_chars: set[str] = set()
++
++    for rel_row, line in enumerate(lines):
++        line_has_box_chars = any(c in ALL_BOX_CHARS for c in line)
++        for ci, ch in enumerate(line):
++            if ch in ALL_BOX_CHARS or ch in ' \t':
++                continue
++            eaw = unicodedata.east_asian_width(ch)
++            if eaw in ('F', 'W', 'A'):
++                if ch not in seen_chars:
++                    seen_chars.add(ch)
++                    severity = Severity.ERROR if line_has_box_chars else Severity.WARNING
++
++                    if eaw == 'A':
++                        width_desc = "ambiguous display width — renders as 1 or 2 cells depending on editor"
++                    else:
++                        width_desc = "full-width character — always renders as 2 cells"
++
++                    if ch in NARROW_ARROW_REPLACEMENTS:
++                        replacement = NARROW_ARROW_REPLACEMENTS[ch]
++                        suggestion = f"Replace '{ch}' with narrow alternative '{replacement}' (EAW=N)"
++                    elif ch in ARROWS:
++                        suggestion = "Replace with a narrow (EAW=N) arrow or ASCII equivalent"
++                    else:
++                        suggestion = "Avoid wide/ambiguous characters in box diagrams to prevent misalignment"
++
++                    issues.append(Issue(
++                        file=file,
++                        line=block_start + rel_row + 1,
++                        column=ci + 1,
++                        severity=severity,
++                        message=f"character '{ch}' (U+{ord(ch):04X}) has {width_desc}",
++                        suggestion=suggestion,
++                    ))
++    return issues
++
++
+ def extract_code_blocks(content: str) -> list[tuple[int, list[str]]]:
+     """Extract code blocks from markdown, returning (start_line, lines) tuples."""
+     blocks = []
+@@ -421,14 +553,18 @@
+     if verbose:
+         print(f"    Checking enclosed box diagram at line {block_start + 1}")
+ 
++    # Check for ambiguous-width characters first
++    ambig_issues = check_ambiguous_width_chars(block_lines, block_start, file_path)
++    issues.extend(ambig_issues)
++
+     # Validate each line in the block
+     for rel_row, line in enumerate(block_lines):
+         box_chars = find_box_chars_in_line(line)
+ 
+-        for col, char in box_chars:
+-            # Check vertical alignment
++        for col, dcol, char in box_chars:
++            # Check vertical alignment (display-width-aware)
+             vert_issues = check_vertical_alignment(
+-                block_lines, rel_row, col, char, file_path
++                block_lines, rel_row, col, dcol, char, file_path
+             )
+             # Adjust line numbers to absolute file positions
+             for issue in vert_issues:
+@@ -455,10 +591,10 @@
+                     suggestion=issue.suggestion
+                 ))
+ 
+-            # Check corner connections
++            # Check corner connections (display-width-aware for vertical)
+             if char in CORNERS:
+                 corner_issues = check_corner_connections(
+-                    block_lines, rel_row, col, char, file_path
++                    block_lines, rel_row, col, dcol, char, file_path
+                 )
+                 for issue in corner_issues:
+                     issues.append(Issue(
