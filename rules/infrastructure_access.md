@@ -12,10 +12,10 @@ source ./scripts/wsl/aisy-setup.sh dev   # or "prod" for production
 
 **Non-interactive (Claude Code) — ask the user for their sudo password first:**
 ```bash
-echo "<sudo_password>" | sudo -S -v 2>/dev/null; cd <aisy_root>/common-python-utils && bash -c 'source ./scripts/wsl/aisy-setup.sh dev' 2>&1
+cd <aisy_root>/common-python-utils && bash -c 'source ./scripts/wsl/aisy-setup.sh dev' <<< "<sudo_password>" 2>&1
 ```
 
-Cache sudo credentials *before* the script runs (using `;` not `&&`). This way `sudo -n true` inside the script finds cached credentials and skips the stdin password prompt.
+Pass the sudo password via here-string (`<<<`) so the script reads it on stdin. Claude Code has no TTY, so sudo credential caching doesn't work — the password must be fed directly to the script.
 
 The script handles: AWS SSO auth, DB password retrieval from Secrets Manager, cloudflared RDS tunnel (`localhost:9999`), EFS tunnel + mount (`/mnt/efs`), Prefect profile, and `~/.pgpass` update.
 
