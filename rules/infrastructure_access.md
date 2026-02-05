@@ -2,7 +2,7 @@
 
 ## Daily Setup Script
 
-Run this every morning (or whenever tunnels/credentials expire) to set up the dev environment.
+Run this every morning (or whenever tunnels/credentials expire) to set up the dev environment. **WSL only** — this script is designed for Windows Subsystem for Linux and will not work on macOS or native Linux.
 
 **Interactive (user's terminal):**
 ```bash
