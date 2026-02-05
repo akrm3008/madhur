@@ -1,5 +1,24 @@
 # Infrastructure Access
 
+## Daily Setup Script
+
+Run this every morning (or whenever tunnels/credentials expire) to set up the dev environment.
+
+**Interactive (user's terminal):**
+```bash
+cd ~/Projects/aisy/common-python-utils
+source ./scripts/wsl/aisy-setup.sh dev   # or "prod" for production
+```
+
+**Non-interactive (Claude Code) — ask the user for their sudo password first:**
+```bash
+echo "<sudo_password>" | sudo -S -v 2>/dev/null; cd <aisy_root>/common-python-utils && bash -c 'source ./scripts/wsl/aisy-setup.sh dev' 2>&1
+```
+
+Cache sudo credentials *before* the script runs (using `;` not `&&`). This way `sudo -n true` inside the script finds cached credentials and skips the stdin password prompt.
+
+The script handles: AWS SSO auth, DB password retrieval from Secrets Manager, cloudflared RDS tunnel (`localhost:9999`), EFS tunnel + mount (`/mnt/efs`), Prefect profile, and `~/.pgpass` update.
+
 ## Database Access
 
 - **Host:** localhost:9999
