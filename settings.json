@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "cc-skills": {
+      "source": {
+        "source": "github",
+        "repo": "terrylica/cc-skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "doc-tools@cc-skills": true
+  }
+}

@@ -7,7 +7,9 @@ This directory contains reusable rules and patterns for Claude across all projec
 ```
 .claude/
 ├── CLAUDE.md           # This file
+├── settings.json       # Plugin marketplace config
 ├── rules/
+│   ├── formatting.md             # Output formatting rules (tables, diagrams)
 │   ├── infrastructure_access.md  # DB, AWS, Docker access patterns
 │   ├── asm_patterns.md           # ASM-specific code patterns
 │   ├── python_rules.md           # Python tooling (uv, ruff)
@@ -15,6 +17,12 @@ This directory contains reusable rules and patterns for Claude across all projec
 │   ├── serverless_functions.md   # Serverless patterns
 │   └── terraform/                # Terraform-specific rules
 ```
+
+## Plugins
+
+The `settings.json` configures the following plugin marketplaces:
+
+- **cc-skills** (`terrylica/cc-skills`) — includes `ascii-diagram-validator` for validating box-drawing diagram alignment in markdown files
 
 ## Usage
 
