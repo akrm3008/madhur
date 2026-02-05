@@ -6,7 +6,7 @@ Run this every morning (or whenever tunnels/credentials expire) to set up the de
 
 **Interactive (user's terminal):**
 ```bash
-cd ~/Projects/aisy/common-python-utils
+cd <aisy_root>/common-python-utils
 source ./scripts/wsl/aisy-setup.sh dev   # or "prod" for production
 ```
 
