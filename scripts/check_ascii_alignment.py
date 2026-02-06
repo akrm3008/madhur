@@ -287,36 +287,41 @@ def check_vertical_alignment(
 
 
 def check_horizontal_alignment(
-    lines: list[str], row: int, col: int, char: str, file: str
+    lines: list[str], row: int, col: int, dcol: int, char: str, file: str
 ) -> list[Issue]:
-    """Check horizontal alignment for a character that connects left or right."""
+    """Check horizontal alignment for a character that connects left or right.
+
+    Uses *dcol* (display column) to find the adjacent character, so that
+    wide characters earlier on the line don't cause misalignment.
+    """
     issues = []
     line = lines[row]
+    char_width = char_display_width(char)
 
     # Check if character should connect left
     if char in CONNECTS_LEFT:
-        left = get_char_at(lines, row, col - 1)
-        if col > 0 and left is not None and left not in CONNECTS_RIGHT and left not in ' \t' and left not in VALID_TERMINATORS:
+        left = char_at_display_col(line, dcol - 1) if dcol > 0 else None
+        if left is not None and left not in CONNECTS_RIGHT and left not in ' \t' and left not in VALID_TERMINATORS:
             issues.append(Issue(
                 file=file,
                 line=row + 1,
                 column=col + 1,
                 severity=Severity.ERROR,
                 message=f"horizontal connector '{char}' has no matching character to the left (found '{left}')",
-                suggestion=f"Add '─', '┌', '└', '┬', '┴', or '┼' at column {col}"
+                suggestion=f"Add '─', '┌', '└', '┬', '┴', or '┼' before this character"
             ))
 
     # Check if character should connect right
     if char in CONNECTS_RIGHT:
-        right = get_char_at(lines, row, col + 1)
-        if col < len(line) - 1 and right is not None and right not in CONNECTS_LEFT and right not in ' \t' and right not in VALID_TERMINATORS:
+        right = char_at_display_col(line, dcol + char_width)
+        if right is not None and right not in CONNECTS_LEFT and right not in ' \t' and right not in VALID_TERMINATORS:
             issues.append(Issue(
                 file=file,
                 line=row + 1,
                 column=col + 1,
                 severity=Severity.ERROR,
                 message=f"horizontal connector '{char}' has no matching character to the right (found '{right}')",
-                suggestion=f"Add '─', '┐', '┘', '┬', '┴', or '┼' at column {col + 2}"
+                suggestion=f"Add '─', '┐', '┘', '┬', '┴', or '┼' after this character"
             ))
 
     return issues
@@ -327,110 +332,127 @@ def check_corner_connections(
 ) -> list[Issue]:
     """Validate corner characters have proper connections.
 
-    Uses *dcol* for vertical checks (above/below) and *col* for horizontal
-    checks (left/right), matching the approach of :func:`check_vertical_alignment`.
+    Corners MUST connect in their required directions.  A space or missing
+    character (None) in a required direction is an error.
     """
     issues = []
+    line = lines[row]
+    char_w = char_display_width(char)
 
-    # Top-left corner: should connect right and down
+    def _check(direction: str, neighbor, connects_set: set):
+        if neighbor is None or neighbor in ' \t\n':
+            issues.append(Issue(
+                file=file,
+                line=row + 1,
+                column=col + 1,
+                severity=Severity.ERROR,
+                message=f"corner '{char}' has no connection {direction} (found space/empty)",
+                suggestion=f"Add a connecting box-drawing character {direction} of '{char}'"
+            ))
+        elif neighbor not in connects_set and neighbor not in VALID_TERMINATORS:
+            issues.append(Issue(
+                file=file,
+                line=row + 1,
+                column=col + 1,
+                severity=Severity.ERROR,
+                message=f"corner '{char}' not connected {direction} (found '{neighbor}')",
+                suggestion=f"Add a connecting box-drawing character {direction} of '{char}'"
+            ))
+
     if char in CORNER_TL:
-        right = get_char_at(lines, row, col + 1)
-        below = get_char_at_display_col(lines, row + 1, dcol)
+        _check("to the right", char_at_display_col(line, dcol + char_w), CONNECTS_LEFT)
+        _check("below", get_char_at_display_col(lines, row + 1, dcol), CONNECTS_UP)
 
-        if right is not None and right not in CONNECTS_LEFT and right not in ' \t\n' and right not in VALID_TERMINATORS:
-            issues.append(Issue(
-                file=file,
-                line=row + 1,
-                column=col + 1,
-                severity=Severity.ERROR,
-                message=f"top-left corner '{char}' not connected to the right",
-                suggestion="Add horizontal line '─' or '═' after the corner"
-            ))
-
-        if below is not None and below not in CONNECTS_UP and below not in ' \t\n' and below not in VALID_TERMINATORS:
-            issues.append(Issue(
-                file=file,
-                line=row + 1,
-                column=col + 1,
-                severity=Severity.ERROR,
-                message=f"top-left corner '{char}' not connected below (found '{below}' at display col {dcol + 1})",
-                suggestion=f"Add vertical line '│' or '║' at line {row + 2}, display column {dcol + 1}"
-            ))
-
-    # Top-right corner: should connect left and down
     if char in CORNER_TR:
-        left = get_char_at(lines, row, col - 1)
-        below = get_char_at_display_col(lines, row + 1, dcol)
+        _check("to the left", char_at_display_col(line, dcol - 1) if dcol > 0 else None, CONNECTS_RIGHT)
+        _check("below", get_char_at_display_col(lines, row + 1, dcol), CONNECTS_UP)
 
-        if left is not None and left not in CONNECTS_RIGHT and left not in ' \t\n' and left not in VALID_TERMINATORS:
-            issues.append(Issue(
-                file=file,
-                line=row + 1,
-                column=col + 1,
-                severity=Severity.ERROR,
-                message=f"top-right corner '{char}' not connected to the left",
-                suggestion="Add horizontal line '─' or '═' before the corner"
-            ))
-
-        if below is not None and below not in CONNECTS_UP and below not in ' \t\n' and below not in VALID_TERMINATORS:
-            issues.append(Issue(
-                file=file,
-                line=row + 1,
-                column=col + 1,
-                severity=Severity.ERROR,
-                message=f"top-right corner '{char}' not connected below (found '{below}' at display col {dcol + 1})",
-                suggestion=f"Add vertical line '│' or '║' at line {row + 2}, display column {dcol + 1}"
-            ))
-
-    # Bottom-left corner: should connect right and up
     if char in CORNER_BL:
-        right = get_char_at(lines, row, col + 1)
-        above = get_char_at_display_col(lines, row - 1, dcol)
+        _check("to the right", char_at_display_col(line, dcol + char_w), CONNECTS_LEFT)
+        _check("above", get_char_at_display_col(lines, row - 1, dcol), CONNECTS_DOWN)
 
-        if right is not None and right not in CONNECTS_LEFT and right not in ' \t\n' and right not in VALID_TERMINATORS:
-            issues.append(Issue(
-                file=file,
-                line=row + 1,
-                column=col + 1,
-                severity=Severity.ERROR,
-                message=f"bottom-left corner '{char}' not connected to the right",
-                suggestion="Add horizontal line '─' or '═' after the corner"
-            ))
-
-        if above is not None and above not in CONNECTS_DOWN and above not in ' \t\n' and above not in VALID_TERMINATORS:
-            issues.append(Issue(
-                file=file,
-                line=row + 1,
-                column=col + 1,
-                severity=Severity.ERROR,
-                message=f"bottom-left corner '{char}' not connected above (found '{above}' at display col {dcol + 1})",
-                suggestion=f"Add vertical line '│' or '║' at line {row}, display column {dcol + 1}"
-            ))
-
-    # Bottom-right corner: should connect left and up
     if char in CORNER_BR:
-        left = get_char_at(lines, row, col - 1)
-        above = get_char_at_display_col(lines, row - 1, dcol)
+        _check("to the left", char_at_display_col(line, dcol - 1) if dcol > 0 else None, CONNECTS_RIGHT)
+        _check("above", get_char_at_display_col(lines, row - 1, dcol), CONNECTS_DOWN)
 
-        if left is not None and left not in CONNECTS_RIGHT and left not in ' \t\n' and left not in VALID_TERMINATORS:
+    return issues
+
+
+def check_junction_connections(
+    lines: list[str], row: int, col: int, dcol: int, char: str, file: str
+) -> list[Issue]:
+    """Validate T-junction and cross characters have proper connections.
+
+    Unlike the generic vertical/horizontal checks which allow spaces,
+    junctions MUST connect in their required directions.  A ``┼`` with a
+    space above is broken; a ``┬`` with a space below is broken.
+    """
+    issues = []
+    line = lines[row]
+    char_w = char_display_width(char)
+
+    def _above():
+        return get_char_at_display_col(lines, row - 1, dcol)
+
+    def _below():
+        return get_char_at_display_col(lines, row + 1, dcol)
+
+    def _left():
+        return char_at_display_col(line, dcol - 1) if dcol > 0 else None
+
+    def _right():
+        return char_at_display_col(line, dcol + char_w)
+
+    def _check(direction: str, neighbor, connects_set: set):
+        if neighbor is None or neighbor in ' \t':
             issues.append(Issue(
                 file=file,
                 line=row + 1,
                 column=col + 1,
                 severity=Severity.ERROR,
-                message=f"bottom-right corner '{char}' not connected to the left",
-                suggestion="Add horizontal line '─' or '═' before the corner"
+                message=f"junction '{char}' has no connection {direction} (found space/empty)",
+                suggestion=f"Add a connecting box-drawing character {direction} of '{char}'"
             ))
-
-        if above is not None and above not in CONNECTS_DOWN and above not in ' \t\n' and above not in VALID_TERMINATORS:
+        elif neighbor not in connects_set and neighbor not in VALID_TERMINATORS:
             issues.append(Issue(
                 file=file,
                 line=row + 1,
                 column=col + 1,
                 severity=Severity.ERROR,
-                message=f"bottom-right corner '{char}' not connected above (found '{above}' at display col {dcol + 1})",
-                suggestion=f"Add vertical line '│' or '║' at line {row}, display column {dcol + 1}"
+                message=f"junction '{char}' not connected {direction} (found '{neighbor}')",
+                suggestion=f"Add a connecting box-drawing character {direction} of '{char}'"
             ))
+
+    # Crosses: must connect all 4 directions
+    if char in CROSSES:
+        _check("above", _above(), CONNECTS_DOWN)
+        _check("below", _below(), CONNECTS_UP)
+        _check("to the left", _left(), CONNECTS_RIGHT)
+        _check("to the right", _right(), CONNECTS_LEFT)
+
+    # T-left (├): connects up, down, right
+    if char in T_LEFT:
+        _check("above", _above(), CONNECTS_DOWN)
+        _check("below", _below(), CONNECTS_UP)
+        _check("to the right", _right(), CONNECTS_LEFT)
+
+    # T-right (┤): connects up, down, left
+    if char in T_RIGHT:
+        _check("above", _above(), CONNECTS_DOWN)
+        _check("below", _below(), CONNECTS_UP)
+        _check("to the left", _left(), CONNECTS_RIGHT)
+
+    # T-top (┬): connects left, right, down
+    if char in T_TOP:
+        _check("to the left", _left(), CONNECTS_RIGHT)
+        _check("to the right", _right(), CONNECTS_LEFT)
+        _check("below", _below(), CONNECTS_UP)
+
+    # T-bottom (┴): connects left, right, up
+    if char in T_BOTTOM:
+        _check("to the left", _left(), CONNECTS_RIGHT)
+        _check("to the right", _right(), CONNECTS_LEFT)
+        _check("above", _above(), CONNECTS_DOWN)
 
     return issues
 
@@ -458,19 +480,22 @@ def check_ambiguous_width_chars(
     always 2 cells.  Both cause visual misalignment when mixed with
     single-cell box-drawing characters.
 
-    Severity is ERROR when the character appears on a line that also contains
-    box-drawing characters (guaranteed visual breakage), WARNING otherwise.
+    Only reports characters on lines that also contain box-drawing characters
+    (where width mismatches cause guaranteed visual breakage).  Lines without
+    box-drawing chars are skipped to avoid noisy false positives in code blocks
+    that aren't actually diagrams.
     """
     issues = []
 
     for rel_row, line in enumerate(lines):
-        line_has_box_chars = any(c in ALL_BOX_CHARS for c in line)
+        if not any(c in ALL_BOX_CHARS for c in line):
+            continue
         for ci, ch in enumerate(line):
             if ch in ALL_BOX_CHARS or ch in ' \t':
                 continue
             eaw = unicodedata.east_asian_width(ch)
             if eaw in ('F', 'W', 'A'):
-                severity = Severity.ERROR if line_has_box_chars else Severity.WARNING
+                severity = Severity.ERROR
 
                 if eaw == 'A':
                     width_desc = "ambiguous display width — renders as 1 or 2 cells depending on editor"
@@ -576,7 +601,7 @@ def validate_block(block_lines: list[str], block_start: int, file_path: str, ver
 
             # Check horizontal alignment
             horiz_issues = check_horizontal_alignment(
-                block_lines, rel_row, col, char, file_path
+                block_lines, rel_row, col, dcol, char, file_path
             )
             for issue in horiz_issues:
                 issues.append(Issue(
@@ -594,6 +619,21 @@ def validate_block(block_lines: list[str], block_start: int, file_path: str, ver
                     block_lines, rel_row, col, dcol, char, file_path
                 )
                 for issue in corner_issues:
+                    issues.append(Issue(
+                        file=issue.file,
+                        line=block_start + issue.line,
+                        column=issue.column,
+                        severity=issue.severity,
+                        message=issue.message,
+                        suggestion=issue.suggestion
+                    ))
+
+            # Check junction connections (T-junctions and crosses)
+            if char in T_JUNCTIONS or char in CROSSES:
+                junc_issues = check_junction_connections(
+                    block_lines, rel_row, col, dcol, char, file_path
+                )
+                for issue in junc_issues:
                     issues.append(Issue(
                         file=issue.file,
                         line=block_start + issue.line,

@@ -104,7 +104,7 @@ imported_findings.live_host_id → boundary_memberships.live_host_id → boundar
 ```
 live_hosts.domain LIKE '%example.com%' → imported_findings.live_host_id
 -- or via DNS:
-dns_entries.key LIKE '%example.com%' → imported_findings.dns_domain_id
+dns_entries.key LIKE '%example.com%' → imported_findings.dns_entry_id
 ```
 
 ### "Get all assets in a boundary"

@@ -5,7 +5,7 @@ paths:
 
 # Aisy Project Overview
 
-Aisy is a security intelligence platform that automates attack surface management (ASM) and vulnerability management for organizations. It discovers, catalogues, and assesses an organisation's internet-facing assets, then imports and triages vulnerability findings from third-party scanners.
+Aisy is a security intelligence platform that automates attack surface management (ASM) and vulnerability management for organizations. It discovers, catalogues, and assesses an organisation's internet-facing assets, then imports, deduplicates, correlates, classifies, and triages vulnerability findings from third-party scanners.
 
 ## Mono-Repo Structure
 
