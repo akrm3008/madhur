@@ -19,6 +19,7 @@ This directory contains reusable rules and patterns for Claude across all projec
 │   ├── frontend_rules.md                  # React/frontend patterns
 │   ├── serverless_functions.md            # Serverless patterns
 │   ├── formatting.md                      # Output formatting rules (tables, diagrams)
+│   ├── stacked_prs.md                     # Stacked PRs with av (Aviator CLI)
 │   └── terraform/                         # Terraform-specific rules
 ├── skills/
 │   ├── db-schema/                         # DB schema reference (points to ORM models + ML_GUIDE.md)
