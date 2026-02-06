@@ -10,12 +10,12 @@ Skips file tree structures (├── patterns) and handles arrow characters.
 Outputs issues in compiler-like format: file:line:column: severity: message
 
 Usage:
-    uv run check_ascii_alignment.py <file_or_directory> [--warn-only] [--verbose]
+    uv run scripts/check_ascii_alignment.py <file_or_directory> [--warn-only] [--verbose]
 
 Examples:
-    uv run check_ascii_alignment.py docs/ARCHITECTURE.md
-    uv run check_ascii_alignment.py docs/*.md
-    uv run check_ascii_alignment.py docs/ --verbose
+    uv run scripts/check_ascii_alignment.py docs/ARCHITECTURE.md
+    uv run scripts/check_ascii_alignment.py docs/*.md
+    uv run scripts/check_ascii_alignment.py docs/ --verbose
 """
 import argparse
 import re
@@ -462,7 +462,6 @@ def check_ambiguous_width_chars(
     box-drawing characters (guaranteed visual breakage), WARNING otherwise.
     """
     issues = []
-    seen_chars: set[str] = set()
 
     for rel_row, line in enumerate(lines):
         line_has_box_chars = any(c in ALL_BOX_CHARS for c in line)
@@ -471,31 +470,29 @@ def check_ambiguous_width_chars(
                 continue
             eaw = unicodedata.east_asian_width(ch)
             if eaw in ('F', 'W', 'A'):
-                if ch not in seen_chars:
-                    seen_chars.add(ch)
-                    severity = Severity.ERROR if line_has_box_chars else Severity.WARNING
+                severity = Severity.ERROR if line_has_box_chars else Severity.WARNING
 
-                    if eaw == 'A':
-                        width_desc = "ambiguous display width — renders as 1 or 2 cells depending on editor"
-                    else:
-                        width_desc = "full-width character — always renders as 2 cells"
+                if eaw == 'A':
+                    width_desc = "ambiguous display width — renders as 1 or 2 cells depending on editor"
+                else:
+                    width_desc = "full-width character — always renders as 2 cells"
 
-                    if ch in NARROW_ARROW_REPLACEMENTS:
-                        replacement = NARROW_ARROW_REPLACEMENTS[ch]
-                        suggestion = f"Replace '{ch}' with narrow alternative '{replacement}' (EAW=N)"
-                    elif ch in ARROWS:
-                        suggestion = "Replace with a narrow (EAW=N) arrow or ASCII equivalent"
-                    else:
-                        suggestion = "Avoid wide/ambiguous characters in box diagrams to prevent misalignment"
+                if ch in NARROW_ARROW_REPLACEMENTS:
+                    replacement = NARROW_ARROW_REPLACEMENTS[ch]
+                    suggestion = f"Replace '{ch}' with narrow alternative '{replacement}' (EAW=N)"
+                elif ch in ARROWS:
+                    suggestion = "Replace with a narrow (EAW=N) arrow or ASCII equivalent"
+                else:
+                    suggestion = "Avoid wide/ambiguous characters in box diagrams to prevent misalignment"
 
-                    issues.append(Issue(
-                        file=file,
-                        line=block_start + rel_row + 1,
-                        column=ci + 1,
-                        severity=severity,
-                        message=f"character '{ch}' (U+{ord(ch):04X}) has {width_desc}",
-                        suggestion=suggestion,
-                    ))
+                issues.append(Issue(
+                    file=file,
+                    line=block_start + rel_row + 1,
+                    column=ci + 1,
+                    severity=severity,
+                    message=f"character '{ch}' (U+{ord(ch):04X}) has {width_desc}",
+                    suggestion=suggestion,
+                ))
     return issues
 
 

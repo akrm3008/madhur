@@ -43,7 +43,7 @@ This directory contains reusable rules and patterns for Claude across all projec
 
 The `settings.json` configures the following plugin marketplaces:
 
-- **cc-skills** (`terrylica/cc-skills`) — includes `ascii-diagram-validator` for validating box-drawing diagram alignment in markdown files
+- **cc-skills** (`terrylica/cc-skills`) — the `doc-tools` plugin, which bundles the `ascii-diagram-validator` skill for validating box-drawing diagram alignment in markdown files
 
 ## Usage
 
