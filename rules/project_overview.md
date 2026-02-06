@@ -22,13 +22,16 @@ Aisy is a security intelligence platform that automates attack surface managemen
 ## Data Flow
 
 ```
-Organisation
-  ├── TLDs (root domains)        ── Domain Collection ── Content Discovery
-  └── ASNs (IP ranges)                                        │
-                                                               ▾
-                                            Boundary Analysis + Threat Modeling
-                                                               ▾
-                        Imported Findings ── Dedup ── Correlate ── Classify ── Assign
+Organisation ── TLDs / ASNs
+                    │
+                    ▾
+            Domain Collection ── Content Discovery
+                                       │
+                                       ▾
+                            Boundary Analysis + Threat Modeling
+                                       │
+                                       ▾
+            Imported Findings ── Dedup ── Correlate ── Classify ── Assign
 ```
 
 1. **Organisation onboarding** — TLDs and ASNs are registered as scan targets.
