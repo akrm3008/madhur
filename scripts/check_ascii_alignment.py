@@ -378,6 +378,43 @@ def check_corner_connections(
     return issues
 
 
+def check_vertical_bar_connections(
+    lines: list[str], row: int, col: int, dcol: int, char: str, file: str
+) -> list[Issue]:
+    """Validate vertical bar characters have proper connections above and below.
+
+    A ``│`` in a box diagram MUST connect vertically — a space or missing
+    character above/below means the box wall is broken (e.g. off-by-one
+    misalignment on one line).
+    """
+    issues = []
+
+    def _check(direction: str, neighbor, connects_set: set):
+        if neighbor is None or neighbor in ' \t\n':
+            issues.append(Issue(
+                file=file,
+                line=row + 1,
+                column=col + 1,
+                severity=Severity.ERROR,
+                message=f"vertical bar '{char}' has no connection {direction} (found space/empty)",
+                suggestion=f"Add a connecting box-drawing character {direction} of '{char}'"
+            ))
+        elif neighbor not in connects_set and neighbor not in VALID_TERMINATORS:
+            issues.append(Issue(
+                file=file,
+                line=row + 1,
+                column=col + 1,
+                severity=Severity.ERROR,
+                message=f"vertical bar '{char}' not connected {direction} (found '{neighbor}')",
+                suggestion=f"Add a connecting box-drawing character {direction} of '{char}'"
+            ))
+
+    _check("above", get_char_at_display_col(lines, row - 1, dcol), CONNECTS_DOWN)
+    _check("below", get_char_at_display_col(lines, row + 1, dcol), CONNECTS_UP)
+
+    return issues
+
+
 def check_junction_connections(
     lines: list[str], row: int, col: int, dcol: int, char: str, file: str
 ) -> list[Issue]:
@@ -619,6 +656,21 @@ def validate_block(block_lines: list[str], block_start: int, file_path: str, ver
                     block_lines, rel_row, col, dcol, char, file_path
                 )
                 for issue in corner_issues:
+                    issues.append(Issue(
+                        file=issue.file,
+                        line=block_start + issue.line,
+                        column=issue.column,
+                        severity=issue.severity,
+                        message=issue.message,
+                        suggestion=issue.suggestion
+                    ))
+
+            # Check vertical bar connections (│ ║ ┃)
+            if char in VERTICAL:
+                vbar_issues = check_vertical_bar_connections(
+                    block_lines, rel_row, col, dcol, char, file_path
+                )
+                for issue in vbar_issues:
                     issues.append(Issue(
                         file=issue.file,
                         line=block_start + issue.line,
