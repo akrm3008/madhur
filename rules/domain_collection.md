@@ -26,14 +26,6 @@ TLD
        └── NucleiScanResult / SecretsScanResult
 ```
 
-## Key Relationships
-
-- **DNSEntry → IP**: A/AAAA records link to `ips` table via `ip_id`. CNAME records do not.
-- **DNSEntry → LiveHost**: Many DNS entries can point to the same LiveHost (`live_host_id`).
-- **LiveHost → Host**: One-to-one. Host stores protocol; LiveHost stores full domain with scheme.
-- **IP → IPPort**: One-to-many. Each port links back to its IP.
-- **IPPort ↔ LiveHost**: Many-to-many. One live host can be on multiple ports; one port can serve multiple vhosts.
-
 ## Persistence Pattern
 
 `persist_live_hosts_to_db()` in `domain_collection/flows/helpers.py` is the main upsert function. It:
@@ -49,10 +41,15 @@ TLD
 - **ContentDiscoveryScan** (`content_discovery_scans`) — one per host per scan_type+http_method combo. Tracks ffuf/nuclei runs.
 - **TaskRun** (`task_runs`) — individual task execution within a scan. Links to either scan type. Stores `task_metadata` as JSONB.
 
-## EndpointLead Hierarchy
+## Downstream Consumers
 
-EndpointLeads have three levels of specificity (only one FK set):
-1. `host_id` set — lead discovered on a live host (most specific)
-2. `dns_entry_id` set, `host_id=None` — subdomain known but not live
-3. `tld_id` set, both `None` — generic lead with no subdomain context
-- `domain_hint` stores the domain string when we can't link to a DNSEntry
+vuln-mgmt-prefect reads this data for ML analysis. The key consumption point is `format_domain_data_impl()` in `vuln-mgmt-prefect core/analysis/boundaries/utils.py`, which converts ASM records into labelled text for LLM reasoning:
+
+- **dns_entries** → SHARED_IP groupings, CNAME service detection, REVERSE_IP_DNS, SIBLING_DNS
+- **live_hosts** → DOMAIN, STATUS, CREATED date
+- **endpoints + endpoint_leads** → CONFIRMED_ENDPOINTS, LEAD_ENDPOINTS (merged + deduped)
+- **ips** → IP infrastructure summary (which domains share IPs)
+- **attribute_tags** → TECHNOLOGY, TAGS
+- **titles, headers** → TITLE, HEADERS
+
+Changes to ASM data shapes (new columns, renamed fields, different data formats) directly affect ML pipeline quality. See `ML_GUIDE.md` in vuln-mgmt-prefect for the full context formatting spec.
