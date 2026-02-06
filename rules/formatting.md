@@ -1,37 +1,5 @@
 # Output Formatting Rules
 
-## Tables
-
-Never use markdown table syntax (pipe-based tables) in conversational output. The terminal renderer frequently breaks markdown tables, causing misaligned columns, garbled output, or only the last row displaying.
-
-Instead, always present tabular data using one of these approaches:
-
-1. **Code-fenced tables** (preferred for structured data):
-
-```
-Name          Status      Count
-─────────────────────────────────
-boundaries    active      350
-reviews       complete    12
-memberships   active      15237
-```
-
-2. **Bulleted lists** (preferred for fewer than 5 items or when columns aren't needed):
-
-- **boundaries**: 350 active
-- **reviews**: 12 complete
-- **memberships**: 15,237 active
-
-3. **Indented key-value pairs** (preferred for single-record detail):
-
-```
-Table:   boundary_reviews
-Rows:    12
-Columns: id, tld_id, label, reviewed_by, reviewed_at
-```
-
-This rule applies to conversational output only. Markdown tables are fine when writing to files (e.g., README.md, documentation).
-
 ## Box-Drawing Diagrams
 
 When creating or editing ASCII box-drawing diagrams (using characters like ─ │ ┌ ┐ └ ┘ ├ ┤ ╔ ═ ╗ etc.) in markdown files:
