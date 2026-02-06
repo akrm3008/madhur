@@ -11,9 +11,7 @@ Aisy is a security intelligence platform that automates attack surface managemen
 
 - **common-python-utils/** — Shared Python library: SQLAlchemy ORM models, DB helpers, Alembic migrations, CLI tools. All database models live here.
 - **asm-prefect/** — Prefect pipelines for domain collection and content discovery (subdomain enumeration, DNS resolution, httpx verification, waymore, ffuf, nuclei, trufflehog).
-- **vuln-mgmt-prefect-1/** — Vulnerability import and deduplication pipelines (leen.dev integration, LLM-based duplicate grouping).
-- **vuln-mgmt-prefect-2/** — Vulnerability correlation, classification, and enrichment pipelines (linchpin analysis, bug class tagging, limitation mapping).
-- **vuln-mgmt-prefect-3/** — Boundary analysis and threat modeling pipelines (LLM-driven asset clustering, boundary generation, review workflows).
+- **vuln-mgmt-prefect/** — All vulnerability management pipelines: import, dedup, correlation, classification, enrichment, boundary analysis, threat modeling. Contains `ML_GUIDE.md` for ML engineering reference.
 - **app-frontend/** — React frontend (yarn). Customer-facing dashboard.
 - **hasura-config/** — Hasura GraphQL Engine configuration. Auto-generates a GraphQL API from the Postgres schema.
 - **evaluation-labeler-ui/** — Internal React tool for labeling deduplication training data.

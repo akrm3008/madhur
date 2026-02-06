@@ -21,22 +21,15 @@ This directory contains reusable rules and patterns for Claude across all projec
 │   ├── formatting.md                      # Output formatting rules (tables, diagrams)
 │   └── terraform/                         # Terraform-specific rules
 ├── skills/
-│   ├── db-schema/                         # Full DB schema reference (invoke for column-level detail)
-│   │   ├── SKILL.md                       # Skill entry point
-│   │   └── reference/                     # Per-domain schema docs
-│   │       ├── business.md
-│   │       ├── domain_collection.md
-│   │       ├── content_discovery.md
-│   │       ├── vulnerability_management.md
-│   │       ├── infrastructure.md
-│   │       └── relationships.md           # Cross-domain FK map + join paths
+│   ├── db-schema/                         # DB schema reference (points to ORM models + ML_GUIDE.md)
+│   │   └── SKILL.md                       # Skill entry point
 │   └── codex-review/                      # Run OpenAI Codex code review on current branch
 │       └── SKILL.md
 ```
 
 ## Skills
 
-- **db-schema** — Full database schema reference. Use when you need column-level detail (types, constraints, FKs, indexes) beyond what the always-loaded `data_architecture.md` provides.
+- **db-schema** — Database schema reference. Points to the ORM models, ML_GUIDE.md, and docs/database-schema-guide.md for column-level detail beyond what the always-loaded `data_architecture.md` provides.
 - **codex-review** — Run an OpenAI Codex code review on the current branch. Requires `codex` CLI installed and authenticated.
 
 ## Plugins
