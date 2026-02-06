@@ -215,7 +215,7 @@ def is_enclosed_box_diagram(lines: list[str]) -> bool:
     has_br = any(any(c in CORNER_BR for c in line) for line in lines)
 
     # For a proper enclosed box, we need at least top-left + bottom-right or top-right + bottom-left
-    return (has_tl and has_br) or (has_tr and has_bl) or (has_tl and has_tr and has_bl and has_br)
+    return (has_tl and has_br) or (has_tr and has_bl)
 
 
 def get_char_at(lines: list[str], row: int, col: int) -> str | None:
@@ -441,8 +441,8 @@ NARROW_ARROW_REPLACEMENTS: dict[str, str] = {
     '▶': '►',  # U+25B6 → U+25BA
     '▼': '▾',  # U+25BC → U+25BE
     '▲': '▴',  # U+25B2 → U+25B4
-    '↓': '⇓',  # U+2193 → U+21D3
-    '↑': '⇑',  # U+2191 → U+21D1
+    '↓': '▾',  # U+2193 → U+25BE
+    '↑': '▴',  # U+2191 → U+25B4
     '←': '⟵',  # U+2190 → U+27F5
     '→': '⟶',  # U+2192 → U+27F6
 }
@@ -502,7 +502,7 @@ def check_ambiguous_width_chars(
 def extract_code_blocks(content: str) -> list[tuple[int, list[str]]]:
     """Extract code blocks from markdown, returning (start_line, lines) tuples."""
     blocks = []
-    lines = content.split('\n')
+    lines = content.splitlines()
     in_block = False
     block_start = 0
     block_lines = []

@@ -45,6 +45,6 @@ When creating or editing ASCII box-drawing diagrams (using characters like ─ �
    - Up: `▴` (U+25B4) — NOT `▲` (U+25B2) or `↑` (U+2191)
 4. After writing or editing any file containing box-drawing diagrams, **run the ascii-diagram-validator** to check alignment:
    ```
-   uv run .claude/scripts/check_ascii_alignment.py <file>
+   uv run scripts/check_ascii_alignment.py <file>
    ```
 5. If the validator reports errors, fix them before considering the edit complete
