@@ -27,7 +27,7 @@ The script must be run from within a git repo that contains `scripts/codex-revie
 ## Options
 
 - `--base BRANCH` — Base branch to diff against (default: `dev`)
-- `--model MODEL` — Codex model to use (default: `gpt-5.2-codex`)
+- `--model MODEL` — Codex model to use (default: `gpt-5.3-codex`)
 - `--output FILE` — Save review to file instead of stdout
 - `--json` — Output raw JSON instead of extracted message
 
