@@ -1,5 +1,18 @@
 # Infrastructure Access
 
+## Hasura Metadata
+
+Metadata deploys are handled by CI on push to `dev`/`main`. For local operations use `aisy-hasura/scripts/metadata.sh`:
+
+```bash
+./scripts/metadata.sh dev          # Check inconsistencies (default)
+./scripts/metadata.sh dev export   # Export server metadata
+./scripts/metadata.sh dev diff     # Diff local vs server
+./scripts/metadata.sh dev apply    # Apply locally (prefer CI via push)
+```
+
+**Codegen note:** `app-frontend/` codegen uses a local `schema.graphql` file, not remote introspection. When adding new Hasura actions, you must also update the local `schema.graphql` for codegen to succeed.
+
 ## Database Access
 
 - **Host:** localhost:9999
