@@ -192,14 +192,17 @@ class LiveStreamCoach:
         )
         try:
             async with self.client.aio.live.connect(model=self.model, config=config) as session:
+                # Send video frames, mic audio, and receive — all concurrently
                 await asyncio.gather(
                     self._send_frames(session),
+                    self._send_audio(session),
                     self._receive(session),
                 )
         except Exception as e:
             self._q.put(f"[Live API error: {e}]")
 
     async def _send_frames(self, session):
+        """Send a video frame every FRAME_INTERVAL_SEC."""
         while self._running:
             frame = self._frame_getter()
             if frame is not None:
@@ -208,6 +211,49 @@ class LiveStreamCoach:
                     video=types.Blob(data=jpeg, mime_type="image/jpeg")
                 )
             await asyncio.sleep(FRAME_INTERVAL_SEC)
+
+    async def _send_audio(self, session):
+        """
+        Stream raw microphone audio to Gemini in real-time.
+        Gemini Live expects: mono PCM, 16kHz, 16-bit signed int (little-endian).
+        We send ~100ms chunks continuously so Gemini can hear the flute as it plays.
+        """
+        try:
+            import sounddevice as sd
+
+            CHUNK_SAMPLES = int(AUDIO_SAMPLE_RATE * 0.1)   # 100ms per chunk = 1600 samples
+            loop = asyncio.get_event_loop()
+
+            def callback(indata, frames, time_info, status):
+                # indata is float32 from sounddevice; convert to int16 PCM for Gemini
+                pcm_int16 = (indata[:, 0] * 32767).astype(np.int16)
+                pcm_bytes = pcm_int16.tobytes()
+                # Schedule send on the async loop (callback runs in a separate thread)
+                asyncio.run_coroutine_threadsafe(
+                    session.send_realtime_input(
+                        audio=types.Blob(
+                            data=pcm_bytes,
+                            mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}"
+                        )
+                    ),
+                    loop,
+                )
+
+            with sd.InputStream(
+                samplerate=AUDIO_SAMPLE_RATE,
+                channels=1,
+                dtype='float32',
+                blocksize=CHUNK_SAMPLES,
+                callback=callback,
+            ):
+                # Keep stream open until stopped
+                while self._running:
+                    await asyncio.sleep(0.1)
+
+        except ImportError:
+            self._q.put("[Audio] sounddevice not installed — run: pip install sounddevice")
+        except Exception as e:
+            self._q.put(f"[Audio stream error: {e}]")
 
     async def _receive(self, session):
         async for msg in session.receive():
