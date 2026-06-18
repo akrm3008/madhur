@@ -118,7 +118,7 @@ class LiveStreamCoach:
     and played back in the Gradio UI automatically.
     """
 
-    NUDGE_EVERY_N_FRAMES = 3
+    NUDGE_EVERY_N_FRAMES = 2
 
     def __init__(self, lesson_num: str, model: str = GEMINI_MODEL_LIVE):
         self.client        = genai.Client(api_key=GEMINI_API_KEY)

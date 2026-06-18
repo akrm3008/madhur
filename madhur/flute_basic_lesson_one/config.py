@@ -19,7 +19,7 @@ GEMINI_MODEL_POLLING = os.getenv("GEMINI_MODEL_POLLING", "gemini-3.1-pro-preview
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # ── Capture settings ──────────────────────────────────────────────────────────
-FRAME_INTERVAL_SEC   = 5.0     # how often to send a frame to Gemini (polling mode)
+FRAME_INTERVAL_SEC   = 2.0     # how often to send a frame to Gemini
 JPEG_QUALITY         = 80      # JPEG compression quality for frames
 SCREEN_MONITOR_INDEX = 1       # 1 = primary monitor (mss index)
 
