@@ -149,16 +149,18 @@ class LiveStreamCoach:
             ),
         )
         try:
+            print(f"[Coach] Connecting to {self.model}…")
             async with self.client.aio.live.connect(
                 model=self.model, config=config
             ) as session:
+                print("[Coach] Connected. Starting streams.")
                 await asyncio.gather(
                     self._send_video(session),
                     self._send_audio(session),
                     self._receive(session),
                 )
         except Exception as e:
-            print(f"[Session error: {e}]")
+            print(f"[Coach] Session error: {e}")
 
     async def _send_video(self, session):
         """
@@ -168,6 +170,7 @@ class LiveStreamCoach:
         # ── Intro ─────────────────────────────────────────────────────────────
         self._phase       = "intro"
         self._phase_start = time.time()
+        print("[Coach] Sending intro nudge…")
         await session.send_client_content(
             turns=types.Content(
                 role="user",
@@ -247,9 +250,16 @@ class LiveStreamCoach:
         async for msg in session.receive():
             if msg.data:
                 audio_buf.extend(msg.data)
-            if msg.server_content and msg.server_content.turn_complete:
+                print(f"[Coach] Audio chunk received: {len(msg.data)} bytes (total so far: {len(audio_buf)})")
+            if msg.text:
+                print(f"[Coach] Text response (unexpected in AUDIO mode): {msg.text[:80]}")
+            sc = getattr(msg, "server_content", None)
+            if sc and getattr(sc, "turn_complete", False):
+                print(f"[Coach] Turn complete. Audio buffer: {len(audio_buf)} bytes")
                 if audio_buf:
                     arr = np.frombuffer(bytes(audio_buf), dtype=np.int16)
+                    duration = len(arr) / GEMINI_AUDIO_OUTPUT_RATE
+                    print(f"[Coach] Queuing audio: {duration:.1f}s")
                     self._phase       = "feedback"
                     self._phase_start = time.time()
                     self._q.put((GEMINI_AUDIO_OUTPUT_RATE, arr))
