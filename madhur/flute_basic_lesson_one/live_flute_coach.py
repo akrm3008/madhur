@@ -1,11 +1,13 @@
 """
 Live Flute Coach — Gemini Live API, real-time video + audio.
 
-Explicit play cycle so the student always knows what to expect:
-  - "🎵 Play now — Xs remaining"  → student plays for PLAY_DURATION_SEC
-  - "⏳ Analyzing your playing…"  → nudge sent, Gemini generating audio
-  - "🔊 Feedback playing"         → spoken feedback plays in browser
-  → cycle repeats automatically
+UX flow:
+  - Click the webcam button to start (it IS the start button)
+  - Gemini speaks a short intro explaining the cycle
+  - "🎵 Play now — Xs remaining" → student plays for PLAY_DURATION_SEC
+  - "⏳ Analyzing…"              → nudge sent, Gemini generating audio
+  - "🔊 Feedback playing"        → spoken feedback plays automatically
+  - cycle repeats until webcam is stopped
 
 Run:
   python live_flute_coach.py --lesson 1 --mode webcam
@@ -13,11 +15,9 @@ Run:
 """
 
 import asyncio
-import io
 import queue
 import threading
 import time
-import wave
 import argparse
 import os
 import sys
@@ -59,8 +59,6 @@ def encode_jpeg(frame_bgr: np.ndarray, quality: int = JPEG_QUALITY) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ScreenCapture:
-    """Continuously grabs the primary monitor at ~10fps using mss."""
-
     def __init__(self, monitor_index: int = SCREEN_MONITOR_INDEX):
         self._monitor_index = monitor_index
         self._frame = None
@@ -99,15 +97,12 @@ class ScreenCapture:
 
 class LiveStreamCoach:
     """
-    Maintains a persistent Gemini Live API WebSocket session.
-
     Play cycle:
-      1. "play"      — stream video+audio for PLAY_DURATION_SEC seconds
-      2. "analyzing" — send nudge, Gemini generates spoken feedback
-      3. "feedback"  — audio queued; wait for it to finish playing
-      4. back to "play"
-
-    The Gradio UI reads phase + elapsed via get_status() to show a countdown.
+      intro     — Gemini speaks a greeting and explains the cycle
+      play      — student plays for PLAY_DURATION_SEC, video+audio streams
+      analyzing — nudge sent, Gemini generating spoken feedback
+      feedback  — audio queued and playing; wait for it to finish
+      → back to play
     """
 
     def __init__(self, lesson_num: str, model: str = GEMINI_MODEL_LIVE):
@@ -116,10 +111,10 @@ class LiveStreamCoach:
         self.lesson_num    = lesson_num
         self.system_prompt = get_live_system_prompt(lesson_num)
         self._q: queue.Queue = queue.Queue()
-        self._running  = False
+        self._running      = False
         self._frame_getter = None
-        self._phase      = "idle"   # idle / play / analyzing / feedback
-        self._phase_start = 0.0
+        self._phase        = "idle"
+        self._phase_start  = 0.0
 
     def start(self, frame_getter):
         self._running      = True
@@ -130,14 +125,12 @@ class LiveStreamCoach:
         self._running = False
 
     def get_status(self) -> dict:
-        """Returns current phase and seconds elapsed in that phase."""
         return {
             "phase":   self._phase,
             "elapsed": time.time() - self._phase_start,
         }
 
     def get_latest_audio(self):
-        """Non-blocking. Returns (sample_rate, np.ndarray) or None."""
         try:
             return self._q.get_nowait()
         except queue.Empty:
@@ -169,15 +162,27 @@ class LiveStreamCoach:
 
     async def _send_video(self, session):
         """
-        Stream video frames and manage the play cycle.
-
-        Sends a frame every FRAME_INTERVAL_SEC. After PLAY_DURATION_SEC
-        seconds in the "play" phase, fires one nudge and moves to "analyzing".
-        The "feedback" and reset back to "play" are handled by _receive().
+        1. Send an intro nudge so Gemini greets the student and explains the cycle.
+        2. Stream video frames; fire a feedback nudge after each PLAY_DURATION_SEC window.
         """
-        self._phase       = "play"
+        # ── Intro ─────────────────────────────────────────────────────────────
+        self._phase       = "intro"
         self._phase_start = time.time()
+        await session.send_client_content(
+            turns=types.Content(
+                role="user",
+                parts=[types.Part(
+                    text=f"Greet the student warmly and tell them: play the bansuri for "
+                         f"{PLAY_DURATION_SEC} seconds, then you'll give spoken feedback, "
+                         f"and the cycle will repeat. Keep it to 2 sentences, "
+                         f"then say 'Ready? Begin!'"
+                )]
+            ),
+            turn_complete=True,
+        )
+        # _receive handles intro audio and resets phase to "play" when done
 
+        # ── Main loop ─────────────────────────────────────────────────────────
         while self._running:
             frame = self._frame_getter()
             if frame is not None:
@@ -186,7 +191,6 @@ class LiveStreamCoach:
                     video=types.Blob(data=jpeg, mime_type="image/jpeg")
                 )
 
-                # Fire nudge once when play window expires
                 if self._phase == "play":
                     elapsed = time.time() - self._phase_start
                     if elapsed >= PLAY_DURATION_SEC:
@@ -197,7 +201,7 @@ class LiveStreamCoach:
                                 role="user",
                                 parts=[types.Part(
                                     text=f"The student just played for {PLAY_DURATION_SEC} seconds. "
-                                         "Based on the video and audio you received, "
+                                         "Based on what you have seen and heard, "
                                          "speak feedback to them now."
                                 )]
                             ),
@@ -235,9 +239,9 @@ class LiveStreamCoach:
 
     async def _receive(self, session):
         """
-        Collect spoken audio from Gemini.
-        After queuing the audio, waits for it to finish playing (estimated
-        from PCM length) then resets the cycle back to "play".
+        Collect spoken audio chunks. When a complete turn arrives, queue it,
+        estimate its duration, wait for it to finish, then reset to "play".
+        Works identically for the intro and all subsequent feedback turns.
         """
         audio_buf = bytearray()
         async for msg in session.receive():
@@ -250,7 +254,6 @@ class LiveStreamCoach:
                     self._phase_start = time.time()
                     self._q.put((GEMINI_AUDIO_OUTPUT_RATE, arr))
 
-                    # Wait for the audio to finish playing, then start next cycle
                     audio_duration_sec = len(arr) / GEMINI_AUDIO_OUTPUT_RATE
                     await asyncio.sleep(audio_duration_sec + 1.0)
 
@@ -307,11 +310,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
         _state["coach"]   = coach
         _state["running"] = True
 
-        lesson_info = LESSONS[lesson_num]
-        return (
-            f"✅ Live session started — Lesson {lesson_num}",
-            lesson_info["description"],
-        )
+        return LESSONS[lesson_num]["description"]
 
     def stop_session():
         _state["running"] = False
@@ -321,7 +320,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
         if _state["screen"]:
             _state["screen"].stop()
             _state["screen"] = None
-        return "Session stopped.", "—"
+        return "", ""   # clear phase status and lesson desc
 
     # ── Frame intake ──────────────────────────────────────────────────────────
 
@@ -330,23 +329,20 @@ def build_gradio_app(capture_mode: str = "webcam"):
             with _state["frame_lock"]:
                 _state["latest_frame"] = frame_rgb
 
-    # ── Feedback + countdown polling (timer) ──────────────────────────────────
+    # ── Feedback + countdown polling ──────────────────────────────────────────
 
     def poll():
-        """
-        Called by Gradio timer every 0.5s.
-        Returns (audio_or_update, cycle_status_string).
-        """
         if not _state["running"] or not _state["coach"]:
-            return gr.update(), "—"
+            return gr.update(), gr.update()
 
-        coach  = _state["coach"]
-        status = coach.get_status()
-        phase  = status["phase"]
+        coach   = _state["coach"]
+        status  = coach.get_status()
+        phase   = status["phase"]
         elapsed = status["elapsed"]
 
-        # Build countdown string
-        if phase == "play":
+        if phase == "intro":
+            cycle_str = "🎙 Your coach is speaking…"
+        elif phase == "play":
             remaining = max(0, PLAY_DURATION_SEC - elapsed)
             cycle_str = f"🎵 Play now — {remaining:.0f}s remaining"
         elif phase == "analyzing":
@@ -354,9 +350,8 @@ def build_gradio_app(capture_mode: str = "webcam"):
         elif phase == "feedback":
             cycle_str = "🔊 Feedback playing"
         else:
-            cycle_str = "Starting…"
+            cycle_str = gr.update()
 
-        # Check for new audio
         audio = coach.get_latest_audio()
         if audio:
             return audio, cycle_str
@@ -366,30 +361,25 @@ def build_gradio_app(capture_mode: str = "webcam"):
     # ── Layout ────────────────────────────────────────────────────────────────
     with gr.Blocks(title="🎵 Live Bansuri Coach") as app:
 
-        gr.Markdown(
-            f"# 🎵 Live Bansuri Coach\n"
-            f"**Gemini Live** `{GEMINI_MODEL_LIVE}`  |  Mode: `{capture_mode}`\n\n"
-            f"Each cycle: **play for {PLAY_DURATION_SEC}s** → Gemini analyzes → "
-            f"**spoken feedback plays** → repeat"
-        )
+        gr.Markdown(f"# 🎵 Live Bansuri Coach\n**{GEMINI_MODEL_LIVE}**  |  `{capture_mode}` mode")
 
         with gr.Row():
             lesson_selector = gr.Dropdown(
                 choices=lesson_choices, value=lesson_choices[0],
-                label="Select Lesson", scale=3,
+                label="Select Lesson", scale=4,
             )
-            start_btn = gr.Button("▶ Start", variant="primary", scale=1)
-            stop_btn  = gr.Button("⏹ Stop",  variant="stop",    scale=1)
+            if capture_mode == "screen":
+                start_btn = gr.Button("▶ Start", variant="primary", scale=1)
+                stop_btn  = gr.Button("⏹ Stop",  variant="stop",    scale=1)
 
-        with gr.Row():
-            session_status = gr.Textbox(label="Status",      interactive=False, scale=2)
-            lesson_desc    = gr.Textbox(label="Lesson Goal", interactive=False, scale=4)
+        lesson_desc = gr.Textbox(label="Lesson Goal", interactive=False, visible=False)
 
-        # Cycle countdown — prominent, always visible
+        # Phase countdown — hidden until session starts
         cycle_status = gr.Textbox(
             label="⏱ Current Phase",
-            value="Press Start to begin",
+            value="",
             interactive=False,
+            visible=False,
         )
 
         with gr.Row():
@@ -399,7 +389,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
                         sources=["webcam"],
                         streaming=True,
                         type="numpy",
-                        label="Your Camera — allow access in browser",
+                        label="Click ▶ to start your session",
                         height=420,
                     )
                 else:
@@ -412,18 +402,36 @@ def build_gradio_app(capture_mode: str = "webcam"):
                     label="🎵 Coach Feedback",
                     autoplay=True,
                     interactive=False,
+                    visible=False,
                 )
 
         # ── Wiring ────────────────────────────────────────────────────────────
 
-        start_btn.click(
-            fn=start_session,
-            inputs=[lesson_selector],
-            outputs=[session_status, lesson_desc],
-        )
-        stop_btn.click(fn=stop_session, outputs=[session_status, cycle_status])
-
         if capture_mode == "webcam":
+            # Webcam ▶ button = Start, ⏹ button = Stop
+            webcam_in.start_recording(
+                fn=start_session,
+                inputs=[lesson_selector],
+                outputs=[lesson_desc],
+            ).then(
+                fn=lambda: (
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                ),
+                outputs=[lesson_desc, cycle_status, coach_audio],
+            )
+            webcam_in.stop_recording(
+                fn=stop_session,
+                outputs=[cycle_status, lesson_desc],
+            ).then(
+                fn=lambda: (
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                ),
+                outputs=[lesson_desc, cycle_status, coach_audio],
+            )
             webcam_in.stream(
                 fn=store_webcam_frame,
                 inputs=[webcam_in],
@@ -431,6 +439,30 @@ def build_gradio_app(capture_mode: str = "webcam"):
                 stream_every=0.5,
             )
         else:
+            start_btn.click(
+                fn=start_session,
+                inputs=[lesson_selector],
+                outputs=[lesson_desc],
+            ).then(
+                fn=lambda: (
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                ),
+                outputs=[lesson_desc, cycle_status, coach_audio],
+            )
+            stop_btn.click(
+                fn=stop_session,
+                outputs=[cycle_status, lesson_desc],
+            ).then(
+                fn=lambda: (
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                ),
+                outputs=[lesson_desc, cycle_status, coach_audio],
+            )
+
             def refresh_screen():
                 cap = _state.get("screen")
                 if cap is None:
