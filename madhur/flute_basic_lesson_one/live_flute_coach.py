@@ -278,6 +278,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
         "coach":        None,
         "latest_frame": None,
         "frame_lock":   threading.Lock(),
+        "start_lock":   threading.Lock(),   # prevents double-start from rapid frames
         "screen":       None,
         "running":      False,
     }
@@ -320,14 +321,39 @@ def build_gradio_app(capture_mode: str = "webcam"):
         if _state["screen"]:
             _state["screen"].stop()
             _state["screen"] = None
-        return "", ""   # clear phase status and lesson desc
+        # Hide all session panels and clear state
+        return (
+            gr.update(visible=False, value=""),
+            gr.update(visible=False, value=""),
+            gr.update(visible=False),
+        )
 
     # ── Frame intake ──────────────────────────────────────────────────────────
 
-    def store_webcam_frame(frame_rgb):
-        if frame_rgb is not None:
-            with _state["frame_lock"]:
-                _state["latest_frame"] = frame_rgb
+    def store_webcam_frame(frame_rgb, lesson_choice):
+        """
+        Called by Gradio every 0.5s once the webcam button is clicked.
+        Auto-starts the Gemini session on the very first frame — so the
+        session only begins when video is actually flowing (no keepalive timeout).
+        """
+        if frame_rgb is None:
+            return gr.update(), gr.update(), gr.update()
+
+        with _state["frame_lock"]:
+            _state["latest_frame"] = frame_rgb
+
+        # Auto-start on first frame (lock prevents double-start from rapid frames)
+        if not _state["running"]:
+            with _state["start_lock"]:
+                if not _state["running"]:
+                    desc = start_session(lesson_choice)
+                    return (
+                        gr.update(visible=True, value=desc),
+                        gr.update(visible=True),
+                        gr.update(visible=True),
+                    )
+
+        return gr.update(), gr.update(), gr.update()
 
     # ── Feedback + countdown polling ──────────────────────────────────────────
 
@@ -368,19 +394,11 @@ def build_gradio_app(capture_mode: str = "webcam"):
                 choices=lesson_choices, value=lesson_choices[0],
                 label="Select Lesson", scale=4,
             )
-            if capture_mode == "screen":
-                start_btn = gr.Button("▶ Start", variant="primary", scale=1)
-                stop_btn  = gr.Button("⏹ Stop",  variant="stop",    scale=1)
+            stop_btn = gr.Button("⏹ Stop", variant="stop", scale=1)
 
-        lesson_desc = gr.Textbox(label="Lesson Goal", interactive=False, visible=False)
-
-        # Phase countdown — hidden until session starts
-        cycle_status = gr.Textbox(
-            label="⏱ Current Phase",
-            value="",
-            interactive=False,
-            visible=False,
-        )
+        # Hidden until session starts
+        lesson_desc  = gr.Textbox(label="Lesson Goal",    interactive=False, visible=False)
+        cycle_status = gr.Textbox(label="⏱ Current Phase", interactive=False, visible=False)
 
         with gr.Row():
             with gr.Column(scale=3):
@@ -389,7 +407,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
                         sources=["webcam"],
                         streaming=True,
                         type="numpy",
-                        label="Click ▶ to start your session",
+                        label="Click the camera button below to start your session",
                         height=420,
                     )
                 else:
@@ -408,58 +426,23 @@ def build_gradio_app(capture_mode: str = "webcam"):
         # ── Wiring ────────────────────────────────────────────────────────────
 
         if capture_mode == "webcam":
-            # Webcam ▶ button = Start, ⏹ button = Stop
-            webcam_in.start_recording(
-                fn=start_session,
-                inputs=[lesson_selector],
-                outputs=[lesson_desc],
-            ).then(
-                fn=lambda: (
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                ),
-                outputs=[lesson_desc, cycle_status, coach_audio],
-            )
-            webcam_in.stop_recording(
-                fn=stop_session,
-                outputs=[cycle_status, lesson_desc],
-            ).then(
-                fn=lambda: (
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                ),
-                outputs=[lesson_desc, cycle_status, coach_audio],
-            )
+            # Session auto-starts on the first frame — no separate Start button needed.
+            # store_webcam_frame returns visibility updates only on first frame.
             webcam_in.stream(
                 fn=store_webcam_frame,
-                inputs=[webcam_in],
-                outputs=[],
+                inputs=[webcam_in, lesson_selector],
+                outputs=[lesson_desc, cycle_status, coach_audio],
                 stream_every=0.5,
             )
         else:
+            start_btn = gr.Button("▶ Start", variant="primary", scale=1)
             start_btn.click(
-                fn=start_session,
+                fn=lambda lc: (
+                    gr.update(visible=True, value=start_session(lc)),
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                ),
                 inputs=[lesson_selector],
-                outputs=[lesson_desc],
-            ).then(
-                fn=lambda: (
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                ),
-                outputs=[lesson_desc, cycle_status, coach_audio],
-            )
-            stop_btn.click(
-                fn=stop_session,
-                outputs=[cycle_status, lesson_desc],
-            ).then(
-                fn=lambda: (
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                ),
                 outputs=[lesson_desc, cycle_status, coach_audio],
             )
 
@@ -476,6 +459,11 @@ def build_gradio_app(capture_mode: str = "webcam"):
 
             screen_timer = gr.Timer(value=0.5)
             screen_timer.tick(fn=refresh_screen, outputs=[screen_out])
+
+        stop_btn.click(
+            fn=stop_session,
+            outputs=[lesson_desc, cycle_status, coach_audio],
+        )
 
         feedback_timer = gr.Timer(value=0.5)
         feedback_timer.tick(fn=poll, outputs=[coach_audio, cycle_status])
