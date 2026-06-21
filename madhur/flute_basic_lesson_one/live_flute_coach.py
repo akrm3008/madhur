@@ -368,6 +368,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
     # ── Feedback + countdown polling ──────────────────────────────────────────
 
     def poll():
+        print(f"[Poll] tick — running={_state['running']}  coach={_state['coach'] is not None}")
         if not _state["running"] or not _state["coach"]:
             return gr.update(), gr.update()
 
@@ -478,7 +479,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
             outputs=[lesson_desc, cycle_status, coach_audio],
         )
 
-        feedback_timer = gr.Timer(value=0.5)
+        feedback_timer = gr.Timer(value=0.5, active=True)
         feedback_timer.tick(fn=poll, outputs=[coach_audio, cycle_status])
 
     return app
