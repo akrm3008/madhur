@@ -367,6 +367,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
                     )
 
         # ── Subsequent frames: update status + deliver audio ──────────────────
+        print(f"[Frame] subsequent call — coach={_state['coach'] is not None}  q_size={_state['coach']._q.qsize() if _state['coach'] else 'N/A'}")
         coach = _state["coach"]
         if not coach:
             return gr.update(), gr.update(), gr.update()
@@ -445,6 +446,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
                 inputs=[webcam_in, lesson_selector],
                 outputs=[lesson_desc, cycle_status, coach_audio],
                 stream_every=0.5,
+                concurrency_limit=None,
             )
         else:
             start_btn = gr.Button("▶ Start", variant="primary", scale=1)
