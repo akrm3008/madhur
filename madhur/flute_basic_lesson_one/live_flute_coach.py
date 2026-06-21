@@ -343,8 +343,11 @@ def build_gradio_app(capture_mode: str = "webcam"):
     def store_webcam_frame(frame_rgb, lesson_choice):
         """
         Called by Gradio every 0.5s once the webcam button is clicked.
-        Auto-starts the Gemini session on the very first frame — so the
-        session only begins when video is actually flowing (no keepalive timeout).
+        Handles everything in one callback since gr.Timer is blocked by the stream:
+          - Auto-starts session on first frame
+          - Updates cycle countdown
+          - Delivers audio to the browser when Gemini responds
+        Outputs: [lesson_desc, cycle_status, coach_audio]
         """
         if frame_rgb is None:
             return gr.update(), gr.update(), gr.update()
@@ -352,27 +355,22 @@ def build_gradio_app(capture_mode: str = "webcam"):
         with _state["frame_lock"]:
             _state["latest_frame"] = frame_rgb
 
-        # Auto-start on first frame (lock prevents double-start from rapid frames)
+        # ── First frame: auto-start session ───────────────────────────────────
         if not _state["running"]:
             with _state["start_lock"]:
                 if not _state["running"]:
                     desc = start_session(lesson_choice)
                     return (
                         gr.update(visible=True, value=desc),
-                        gr.update(visible=True),
+                        gr.update(visible=True, value="🎙 Starting…"),
                         gr.update(),
                     )
 
-        return gr.update(), gr.update(), gr.update()
+        # ── Subsequent frames: update status + deliver audio ──────────────────
+        coach = _state["coach"]
+        if not coach:
+            return gr.update(), gr.update(), gr.update()
 
-    # ── Feedback + countdown polling ──────────────────────────────────────────
-
-    def poll():
-        print(f"[Poll] tick — running={_state['running']}  coach={_state['coach'] is not None}")
-        if not _state["running"] or not _state["coach"]:
-            return gr.update(), gr.update()
-
-        coach   = _state["coach"]
         status  = coach.get_status()
         phase   = status["phase"]
         elapsed = status["elapsed"]
@@ -392,10 +390,10 @@ def build_gradio_app(capture_mode: str = "webcam"):
         audio = coach.get_latest_audio()
         if audio:
             sr, arr = audio
-            print(f"[Poll] Sending audio to browser: {len(arr)} samples @ {sr}Hz")
-            return (sr, arr), cycle_str
+            print(f"[Frame] Delivering audio to browser: {len(arr)} samples @ {sr}Hz")
+            return gr.update(), gr.update(value=cycle_str), (sr, arr)
 
-        return gr.update(), cycle_str
+        return gr.update(), gr.update(value=cycle_str), gr.update()
 
     # ── Layout ────────────────────────────────────────────────────────────────
     with gr.Blocks(title="🎵 Live Bansuri Coach") as app:
@@ -478,9 +476,6 @@ def build_gradio_app(capture_mode: str = "webcam"):
             fn=stop_session,
             outputs=[lesson_desc, cycle_status, coach_audio],
         )
-
-        feedback_timer = gr.Timer(value=0.5, active=True)
-        feedback_timer.tick(fn=poll, outputs=[coach_audio, cycle_status])
 
     return app
 
