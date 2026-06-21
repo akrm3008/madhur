@@ -360,7 +360,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
                     return (
                         gr.update(visible=True, value=desc),
                         gr.update(visible=True),
-                        gr.update(visible=True),
+                        gr.update(),
                     )
 
         return gr.update(), gr.update(), gr.update()
@@ -390,7 +390,9 @@ def build_gradio_app(capture_mode: str = "webcam"):
 
         audio = coach.get_latest_audio()
         if audio:
-            return audio, cycle_str
+            sr, arr = audio
+            print(f"[Poll] Sending audio to browser: {len(arr)} samples @ {sr}Hz")
+            return (sr, arr), cycle_str
 
         return gr.update(), cycle_str
 
@@ -430,7 +432,8 @@ def build_gradio_app(capture_mode: str = "webcam"):
                     label="🎵 Coach Feedback",
                     autoplay=True,
                     interactive=False,
-                    visible=False,
+                    type="numpy",
+                    visible=True,   # always visible — avoids update timing issues
                 )
 
         # ── Wiring ────────────────────────────────────────────────────────────
