@@ -331,22 +331,20 @@ def build_gradio_app(capture_mode: str = "webcam"):
         if _state["screen"]:
             _state["screen"].stop()
             _state["screen"] = None
-        # Hide all session panels and clear state
         return (
-            gr.update(visible=False, value=""),
-            gr.update(visible=False, value=""),
-            gr.update(visible=False),
+            gr.update(value="Session stopped. Start the webcam to begin again."),
+            gr.update(value=""),
+            gr.update(value=None),
         )
 
     # ── Frame intake ──────────────────────────────────────────────────────────
 
     def store_webcam_frame(frame_rgb, lesson_choice):
         """
-        Called by Gradio every 0.5s once the webcam button is clicked.
-        Handles everything in one callback since gr.Timer is blocked by the stream:
-          - Auto-starts session on first frame
-          - Updates cycle countdown
-          - Delivers audio to the browser when Gemini responds
+        Called by Gradio every 0.5s while the webcam is active.
+        IMPORTANT: never change component visibility here — DOM re-renders
+        interrupt the stream. All components are always visible; we only
+        update their values.
         Outputs: [lesson_desc, cycle_status, coach_audio]
         """
         if frame_rgb is None:
@@ -355,19 +353,18 @@ def build_gradio_app(capture_mode: str = "webcam"):
         with _state["frame_lock"]:
             _state["latest_frame"] = frame_rgb
 
-        # ── First frame: auto-start session ───────────────────────────────────
+        # ── First frame: auto-start session (value update only, no visibility) ─
         if not _state["running"]:
             with _state["start_lock"]:
                 if not _state["running"]:
                     desc = start_session(lesson_choice)
                     return (
-                        gr.update(visible=True, value=desc),
-                        gr.update(visible=True, value="🎙 Starting…"),
+                        gr.update(value=desc),
+                        gr.update(value="🎙 Starting…"),
                         gr.update(),
                     )
 
-        # ── Subsequent frames: update status + deliver audio ──────────────────
-        print(f"[Frame] subsequent call — coach={_state['coach'] is not None}  q_size={_state['coach']._q.qsize() if _state['coach'] else 'N/A'}")
+        # ── Every frame: update cycle status + deliver audio when ready ───────
         coach = _state["coach"]
         if not coach:
             return gr.update(), gr.update(), gr.update()
@@ -408,9 +405,8 @@ def build_gradio_app(capture_mode: str = "webcam"):
             )
             stop_btn = gr.Button("⏹ Stop", variant="stop", scale=1)
 
-        # Hidden until session starts
-        lesson_desc  = gr.Textbox(label="Lesson Goal",    interactive=False, visible=False)
-        cycle_status = gr.Textbox(label="⏱ Current Phase", interactive=False, visible=False)
+        lesson_desc  = gr.Textbox(label="Lesson Goal",     interactive=False, value="Select a lesson and start the webcam to begin")
+        cycle_status = gr.Textbox(label="⏱ Current Phase", interactive=False, value="")
 
         with gr.Row():
             with gr.Column(scale=3):
