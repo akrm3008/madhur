@@ -111,10 +111,11 @@ class LiveStreamCoach:
         self.lesson_num    = lesson_num
         self.system_prompt = get_live_system_prompt(lesson_num)
         self._q: queue.Queue = queue.Queue()
-        self._running      = False
-        self._frame_getter = None
-        self._phase        = "idle"
-        self._phase_start  = 0.0
+        self._running        = False
+        self._frame_getter   = None
+        self._phase          = "idle"
+        self._phase_start    = 0.0
+        self._feedback_until = 0.0   # time.time() when current feedback audio ends
 
     def start(self, frame_getter):
         self._running      = True
@@ -161,6 +162,10 @@ class LiveStreamCoach:
                 )
         except Exception as e:
             print(f"[Coach] Session error: {e}")
+        finally:
+            # Ensure phase is cleared so UI doesn't get stuck
+            self._phase   = "idle"
+            self._running = False
 
     async def _send_video(self, session):
         """
@@ -194,22 +199,28 @@ class LiveStreamCoach:
                     video=types.Blob(data=jpeg, mime_type="image/jpeg")
                 )
 
-                if self._phase == "play":
-                    elapsed = time.time() - self._phase_start
-                    if elapsed >= PLAY_DURATION_SEC:
-                        self._phase       = "analyzing"
-                        self._phase_start = time.time()
-                        await session.send_client_content(
-                            turns=types.Content(
-                                role="user",
-                                parts=[types.Part(
-                                    text=f"The student just played for {PLAY_DURATION_SEC} seconds. "
-                                         "Based on what you have seen and heard, "
-                                         "speak feedback to them now."
-                                )]
-                            ),
-                            turn_complete=True,
-                        )
+                now = time.time()
+
+                # Feedback audio finished playing → start next play window
+                if self._phase == "feedback" and now >= self._feedback_until:
+                    self._phase       = "play"
+                    self._phase_start = now
+
+                # Play window expired → fire feedback nudge
+                elif self._phase == "play" and (now - self._phase_start) >= PLAY_DURATION_SEC:
+                    self._phase       = "analyzing"
+                    self._phase_start = now
+                    await session.send_client_content(
+                        turns=types.Content(
+                            role="user",
+                            parts=[types.Part(
+                                text=f"The student just played for {PLAY_DURATION_SEC} seconds. "
+                                     "Based on what you have seen and heard, "
+                                     "speak feedback to them now."
+                            )]
+                        ),
+                        turn_complete=True,
+                    )
 
             await asyncio.sleep(FRAME_INTERVAL_SEC)
 
@@ -250,26 +261,18 @@ class LiveStreamCoach:
         async for msg in session.receive():
             if msg.data:
                 audio_buf.extend(msg.data)
-                print(f"[Coach] Audio chunk received: {len(msg.data)} bytes (total so far: {len(audio_buf)})")
-            if msg.text:
-                print(f"[Coach] Text response (unexpected in AUDIO mode): {msg.text[:80]}")
             sc = getattr(msg, "server_content", None)
             if sc and getattr(sc, "turn_complete", False):
-                print(f"[Coach] Turn complete. Audio buffer: {len(audio_buf)} bytes")
                 if audio_buf:
                     arr = np.frombuffer(bytes(audio_buf), dtype=np.int16)
                     duration = len(arr) / GEMINI_AUDIO_OUTPUT_RATE
                     print(f"[Coach] Queuing audio: {duration:.1f}s")
-                    self._phase       = "feedback"
-                    self._phase_start = time.time()
+                    self._phase          = "feedback"
+                    self._phase_start    = time.time()
+                    self._feedback_until = time.time() + duration + 1.0
                     self._q.put((GEMINI_AUDIO_OUTPUT_RATE, arr))
-
-                    audio_duration_sec = len(arr) / GEMINI_AUDIO_OUTPUT_RATE
-                    await asyncio.sleep(audio_duration_sec + 1.0)
-
-                    self._phase       = "play"
-                    self._phase_start = time.time()
                     audio_buf = bytearray()
+                    # No sleep here — _send_video checks _feedback_until to reset phase
             if not self._running:
                 break
 
