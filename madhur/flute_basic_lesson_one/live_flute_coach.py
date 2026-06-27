@@ -97,12 +97,15 @@ class ScreenCapture:
 
 class LiveStreamCoach:
     """
-    Play cycle:
-      intro     — Gemini speaks a greeting and explains the cycle
-      play      — student plays for PLAY_DURATION_SEC, video+audio streams
-      analyzing — nudge sent, Gemini generating spoken feedback
-      feedback  — audio queued and playing; wait for it to finish
-      → back to play
+    Uses one short-lived Gemini Live session per cycle to avoid keepalive
+    timeout issues with long-running WebSocket connections.
+
+    Cycle:
+      intro    — fresh session: Gemini greets student, explains cycle
+      play     — fresh session: stream video+audio for PLAY_DURATION_SEC
+      analyzing— nudge sent within same session
+      feedback — audio queued; session closes; sleep until audio done
+      → repeat play/analyzing/feedback
     """
 
     def __init__(self, lesson_num: str, model: str = GEMINI_MODEL_LIVE):
@@ -115,7 +118,6 @@ class LiveStreamCoach:
         self._frame_getter   = None
         self._phase          = "idle"
         self._phase_start    = 0.0
-        self._feedback_until = 0.0   # time.time() when current feedback audio ends
 
     def start(self, frame_getter):
         self._running      = True
@@ -140,122 +142,24 @@ class LiveStreamCoach:
     def _run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._stream())
+        loop.run_until_complete(self._main_loop())
 
-    async def _stream(self):
-        config = types.LiveConnectConfig(
+    # ── Session config (reused for every session) ──────────────────────────────
+
+    def _make_config(self):
+        return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction=types.Content(
                 parts=[types.Part(text=self.system_prompt)]
             ),
         )
-        try:
-            print(f"[Coach] Connecting to {self.model}…")
-            async with self.client.aio.live.connect(
-                model=self.model, config=config
-            ) as session:
-                print("[Coach] Connected. Starting streams.")
-                await asyncio.gather(
-                    self._send_video(session),
-                    self._send_audio(session),
-                    self._receive(session),
-                )
-        except Exception as e:
-            print(f"[Coach] Session error: {e}")
-        finally:
-            # Ensure phase is cleared so UI doesn't get stuck
-            self._phase   = "idle"
-            self._running = False
 
-    async def _send_video(self, session):
+    # ── Single-session helpers ─────────────────────────────────────────────────
+
+    async def _collect_audio_response(self, session) -> float:
         """
-        1. Send an intro nudge so Gemini greets the student and explains the cycle.
-        2. Stream video frames; fire a feedback nudge after each PLAY_DURATION_SEC window.
-        """
-        # ── Intro ─────────────────────────────────────────────────────────────
-        self._phase       = "intro"
-        self._phase_start = time.time()
-        print("[Coach] Sending intro nudge…")
-        await session.send_client_content(
-            turns=types.Content(
-                role="user",
-                parts=[types.Part(
-                    text=f"Greet the student warmly and tell them: play the bansuri for "
-                         f"{PLAY_DURATION_SEC} seconds, then you'll give spoken feedback, "
-                         f"and the cycle will repeat. Keep it to 2 sentences, "
-                         f"then say 'Ready? Begin!'"
-                )]
-            ),
-            turn_complete=True,
-        )
-        # _receive handles intro audio and resets phase to "play" when done
-
-        # ── Main loop ─────────────────────────────────────────────────────────
-        while self._running:
-            frame = self._frame_getter()
-            if frame is not None:
-                jpeg = encode_jpeg(frame, quality=70)
-                await session.send_realtime_input(
-                    video=types.Blob(data=jpeg, mime_type="image/jpeg")
-                )
-
-                now = time.time()
-
-                # Feedback audio finished playing → start next play window
-                if self._phase == "feedback" and now >= self._feedback_until:
-                    self._phase       = "play"
-                    self._phase_start = now
-
-                # Play window expired → fire feedback nudge
-                elif self._phase == "play" and (now - self._phase_start) >= PLAY_DURATION_SEC:
-                    self._phase       = "analyzing"
-                    self._phase_start = now
-                    await session.send_client_content(
-                        turns=types.Content(
-                            role="user",
-                            parts=[types.Part(
-                                text=f"The student just played for {PLAY_DURATION_SEC} seconds. "
-                                     "Based on what you have seen and heard, "
-                                     "speak feedback to them now."
-                            )]
-                        ),
-                        turn_complete=True,
-                    )
-
-            await asyncio.sleep(FRAME_INTERVAL_SEC)
-
-    async def _send_audio(self, session):
-        """Stream mic audio in 100ms PCM chunks."""
-        try:
-            import sounddevice as sd
-            CHUNK = int(AUDIO_SAMPLE_RATE * 0.1)
-            loop  = asyncio.get_event_loop()
-
-            def callback(indata, frames, time_info, status):
-                pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
-                asyncio.run_coroutine_threadsafe(
-                    session.send_realtime_input(
-                        audio=types.Blob(data=pcm,
-                                         mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
-                    ),
-                    loop,
-                )
-
-            with sd.InputStream(samplerate=AUDIO_SAMPLE_RATE, channels=1,
-                                 dtype='float32', blocksize=CHUNK, callback=callback):
-                while self._running:
-                    await asyncio.sleep(0.1)
-
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"[Mic error: {e}]")
-
-    async def _receive(self, session):
-        """
-        Collect spoken audio chunks. When a complete turn arrives, queue it,
-        estimate its duration, wait for it to finish, then reset to "play".
-        Works identically for the intro and all subsequent feedback turns.
+        Read messages from session until turn_complete, queue the audio.
+        Returns duration in seconds (0 if no audio).
         """
         audio_buf = bytearray()
         async for msg in session.receive():
@@ -263,18 +167,147 @@ class LiveStreamCoach:
                 audio_buf.extend(msg.data)
             sc = getattr(msg, "server_content", None)
             if sc and getattr(sc, "turn_complete", False):
-                if audio_buf:
-                    arr = np.frombuffer(bytes(audio_buf), dtype=np.int16)
-                    duration = len(arr) / GEMINI_AUDIO_OUTPUT_RATE
-                    print(f"[Coach] Queuing audio: {duration:.1f}s")
-                    self._phase          = "feedback"
-                    self._phase_start    = time.time()
-                    self._feedback_until = time.time() + duration + 1.0
-                    self._q.put((GEMINI_AUDIO_OUTPUT_RATE, arr))
-                    audio_buf = bytearray()
-                    # No sleep here — _send_video checks _feedback_until to reset phase
-            if not self._running:
                 break
+        if audio_buf:
+            arr = np.frombuffer(bytes(audio_buf), dtype=np.int16)
+            dur = len(arr) / GEMINI_AUDIO_OUTPUT_RATE
+            print(f"[Coach] Queuing audio: {dur:.1f}s")
+            self._phase       = "feedback"
+            self._phase_start = time.time()
+            self._q.put((GEMINI_AUDIO_OUTPUT_RATE, arr))
+            return dur
+        return 0.0
+
+    async def _stream_mic_to_session(self, session):
+        """Drain a thread-safe PCM queue and send to session."""
+        while self._running:
+            if not self._pcm_queue.empty():
+                pcm = self._pcm_queue.get_nowait()
+                await session.send_realtime_input(
+                    audio=types.Blob(data=pcm,
+                                     mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
+                )
+            else:
+                await asyncio.sleep(0.02)
+
+    # ── Main loop: one session per cycle ──────────────────────────────────────
+
+    async def _main_loop(self):
+        # Shared queue for mic PCM — filled by sounddevice callback
+        self._pcm_queue: queue.Queue = queue.Queue(maxsize=50)
+
+        # Start mic capture in background (fills _pcm_queue)
+        mic_thread = threading.Thread(target=self._mic_capture, daemon=True)
+        mic_thread.start()
+
+        try:
+            # ── Intro session ─────────────────────────────────────────────────
+            self._phase = "intro"
+            self._phase_start = time.time()
+            print("[Coach] Intro session…")
+            try:
+                async with self.client.aio.live.connect(
+                    model=self.model, config=self._make_config()
+                ) as session:
+                    await session.send_client_content(
+                        turns=types.Content(
+                            role="user",
+                            parts=[types.Part(
+                                text=f"Greet the student warmly and tell them: play the bansuri "
+                                     f"for {PLAY_DURATION_SEC} seconds, then you will give spoken "
+                                     f"feedback, and the cycle repeats. Keep it to 2 sentences, "
+                                     f"then say 'Ready? Begin!'"
+                            )]
+                        ),
+                        turn_complete=True,
+                    )
+                    intro_dur = await self._collect_audio_response(session)
+            except Exception as e:
+                print(f"[Coach] Intro error: {e}")
+                intro_dur = 0.0
+
+            # Wait for intro audio to finish playing
+            if intro_dur > 0:
+                await asyncio.sleep(intro_dur + 1.0)
+
+            # ── Feedback cycles ───────────────────────────────────────────────
+            while self._running:
+                self._phase       = "play"
+                self._phase_start = time.time()
+                print(f"[Coach] Play session — student plays for {PLAY_DURATION_SEC}s…")
+
+                try:
+                    async with self.client.aio.live.connect(
+                        model=self.model, config=self._make_config()
+                    ) as session:
+                        # Stream video + mic audio for PLAY_DURATION_SEC
+                        deadline = time.time() + PLAY_DURATION_SEC
+                        mic_task = asyncio.create_task(
+                            self._stream_mic_to_session(session)
+                        )
+                        while time.time() < deadline and self._running:
+                            frame = self._frame_getter()
+                            if frame is not None:
+                                jpeg = encode_jpeg(frame, quality=70)
+                                await session.send_realtime_input(
+                                    video=types.Blob(data=jpeg, mime_type="image/jpeg")
+                                )
+                            await asyncio.sleep(FRAME_INTERVAL_SEC)
+                        mic_task.cancel()
+
+                        # Nudge Gemini for feedback
+                        self._phase       = "analyzing"
+                        self._phase_start = time.time()
+                        await session.send_client_content(
+                            turns=types.Content(
+                                role="user",
+                                parts=[types.Part(
+                                    text=f"The student just played for {PLAY_DURATION_SEC} "
+                                         "seconds. Based on what you saw and heard, "
+                                         "speak feedback now."
+                                )]
+                            ),
+                            turn_complete=True,
+                        )
+
+                        # Collect audio response (session closes cleanly after)
+                        cycle_dur = await self._collect_audio_response(session)
+
+                except Exception as e:
+                    print(f"[Coach] Cycle error: {e}")
+                    cycle_dur = 0.0
+
+                # Wait for feedback audio to finish before next cycle
+                if cycle_dur > 0:
+                    await asyncio.sleep(cycle_dur + 1.0)
+
+        finally:
+            self._phase   = "idle"
+            self._running = False
+
+    def _mic_capture(self):
+        """Fill _pcm_queue from sounddevice mic. Runs in its own thread."""
+        try:
+            import sounddevice as sd
+            CHUNK = int(AUDIO_SAMPLE_RATE * 0.1)
+
+            def callback(indata, frames, time_info, status):
+                if self._running:
+                    pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
+                    try:
+                        self._pcm_queue.put_nowait(pcm)
+                    except queue.Full:
+                        pass  # drop oldest if queue full
+
+            with sd.InputStream(samplerate=AUDIO_SAMPLE_RATE, channels=1,
+                                 dtype='float32', blocksize=CHUNK, callback=callback):
+                while self._running:
+                    time.sleep(0.1)
+
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"[Coach] Mic error: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
