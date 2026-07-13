@@ -149,6 +149,13 @@ class LiveStreamCoach:
     def _make_config(self):
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name="Kore"   # calm, clear voice — consistent across sessions
+                    )
+                )
+            ),
             system_instruction=types.Content(
                 parts=[types.Part(text=self.system_prompt)]
             ),
@@ -156,9 +163,11 @@ class LiveStreamCoach:
 
     # ── Single-session helpers ─────────────────────────────────────────────────
 
-    async def _collect_audio_response(self, session) -> float:
+    async def _collect_audio_response(self, session, phase: str = "feedback") -> float:
         """
         Read messages from session until turn_complete, queue the audio.
+        Sets self._phase to `phase` once audio arrives (use "intro" for the
+        greeting so the UI label stays correct).
         Returns duration in seconds (0 if no audio).
         """
         audio_buf = bytearray()
@@ -171,8 +180,8 @@ class LiveStreamCoach:
         if audio_buf:
             arr = np.frombuffer(bytes(audio_buf), dtype=np.int16)
             dur = len(arr) / GEMINI_AUDIO_OUTPUT_RATE
-            print(f"[Coach] Queuing audio: {dur:.1f}s")
-            self._phase       = "feedback"
+            print(f"[Coach] Queuing audio ({phase}): {dur:.1f}s")
+            self._phase       = phase
             self._phase_start = time.time()
             self._q.put((GEMINI_AUDIO_OUTPUT_RATE, arr))
             return dur
@@ -221,7 +230,7 @@ class LiveStreamCoach:
                         ),
                         turn_complete=True,
                     )
-                    intro_dur = await self._collect_audio_response(session)
+                    intro_dur = await self._collect_audio_response(session, phase="intro")
             except Exception as e:
                 print(f"[Coach] Intro error: {e}")
                 intro_dur = 0.0
@@ -327,6 +336,7 @@ def build_gradio_app(capture_mode: str = "webcam"):
         "start_lock":   threading.Lock(),   # prevents double-start from rapid frames
         "screen":       None,
         "running":      False,
+        "last_status":  "",                 # dedup: skip gr.update when label unchanged
     }
 
     def extract_lesson_num(choice: str) -> str:
@@ -409,25 +419,33 @@ def build_gradio_app(capture_mode: str = "webcam"):
         phase   = status["phase"]
         elapsed = status["elapsed"]
 
-        if phase == "intro":
-            cycle_str = "🎙 Your coach is speaking…"
+        if phase in ("intro", "feedback"):
+            # Static strings — only update once to avoid blinking
+            cycle_str = "🎙 Your coach is speaking…" if phase == "intro" else "🔊 Feedback playing"
         elif phase == "play":
             remaining = max(0, PLAY_DURATION_SEC - elapsed)
             cycle_str = f"🎵 Play now — {remaining:.0f}s remaining"
         elif phase == "analyzing":
             cycle_str = "⏳ Analyzing your playing…"
-        elif phase == "feedback":
-            cycle_str = "🔊 Feedback playing"
         else:
-            cycle_str = gr.update()
+            cycle_str = None   # idle — no update
+
+        # Skip DOM update when the label text hasn't changed (eliminates blinking)
+        if cycle_str is not None and cycle_str == _state["last_status"]:
+            status_update = gr.update()
+        elif cycle_str is not None:
+            _state["last_status"] = cycle_str
+            status_update = gr.update(value=cycle_str)
+        else:
+            status_update = gr.update()
 
         audio = coach.get_latest_audio()
         if audio:
             sr, arr = audio
             print(f"[Frame] Delivering audio to browser: {len(arr)} samples @ {sr}Hz")
-            return gr.update(), gr.update(value=cycle_str), (sr, arr)
+            return gr.update(), status_update, (sr, arr)
 
-        return gr.update(), gr.update(value=cycle_str), gr.update()
+        return gr.update(), status_update, gr.update()
 
     # ── Layout ────────────────────────────────────────────────────────────────
     with gr.Blocks(title="🎵 Live Bansuri Coach") as app:
